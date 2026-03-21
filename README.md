@@ -1,3 +1,5 @@
+![jjk cover](cover.png)
+
 # jjk
 
 `jjk` turns a project into a safe space.
