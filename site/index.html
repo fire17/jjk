@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>jjk | Turn Projects Into Safe Spaces</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="orb orb-a"></div>
+    <div class="orb orb-b"></div>
+    <header class="hero shell">
+      <div class="eyebrow">stateful development for humans and agents</div>
+      <h1>Turn projects into safe spaces.</h1>
+      <p class="lede">
+        Branch from any moment. Return without fear. Let humans and agents build
+        in parallel while Git and Jujutsu stay quietly useful underneath.
+      </p>
+      <div class="hero-actions">
+        <a href="#demo" class="button">See The Flow</a>
+        <a href="#concepts" class="button button-secondary">Read The Model</a>
+      </div>
+      <div class="terminal-card">
+        <div class="terminal-bar">
+          <span></span><span></span><span></span>
+        </div>
+        <pre id="hero-demo">jjk init
+jjk "baseline before parser rewrite"
+jjk step "split state store from git engine"
+jjk nice "green tests after cleanup"
+jjk see</pre>
+      </div>
+    </header>
+
+    <main>
+      <section class="problem shell">
+        <div class="section-kicker">the problem</div>
+        <h2>Development still feels more fragile than it should.</h2>
+        <div class="problem-grid">
+          <article>
+            <h3>Risky experiments</h3>
+            <p>Trying ideas still feels like borrowing trouble.</p>
+          </article>
+          <article>
+            <h3>Agent retries overwrite context</h3>
+            <p>Chat branches do not automatically preserve file-state branches.</p>
+          </article>
+          <article>
+            <h3>History surgery everywhere</h3>
+            <p>People keep paying a rebasing tax just to stay safe.</p>
+          </article>
+          <article>
+            <h3>Good places get lost</h3>
+            <p>There is no first-class concept for “this version was solid.”</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="demo" class="demo shell">
+        <div class="section-kicker">how it feels</div>
+        <h2>Work in states, not fear.</h2>
+        <div class="demo-layout">
+          <div class="demo-controls">
+            <button data-demo="save" class="active">Save</button>
+            <button data-demo="return">Return</button>
+            <button data-demo="lane">Lane</button>
+            <button data-demo="watch">Watch</button>
+          </div>
+          <div class="demo-panel">
+            <pre id="demo-terminal"></pre>
+            <div id="demo-copy" class="demo-copy"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="concepts" class="concepts shell">
+        <div class="section-kicker">core concepts</div>
+        <h2>One vocabulary everywhere.</h2>
+        <div class="concept-grid">
+          <article>
+            <h3>Safe Space</h3>
+            <p>A repo that can remember meaningful states and let you get back to them.</p>
+          </article>
+          <article>
+            <h3>State</h3>
+            <p>A labeled snapshot with meaning: save, step, nice, star, or auto.</p>
+          </article>
+          <article>
+            <h3>Lane</h3>
+            <p>A named stream of work that can align with a Git branch or worktree.</p>
+          </article>
+          <article>
+            <h3>Story</h3>
+            <p>The memorable path through the work, not every move you made.</p>
+          </article>
+          <article>
+            <h3>Freeze</h3>
+            <p>A portable bundle and manifest for handoff, review, or backup.</p>
+          </article>
+          <article>
+            <h3>Timeshift</h3>
+            <p>An experimental path toward restoring more than files alone.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="bridge shell">
+        <div class="section-kicker">under the hood</div>
+        <h2>Git-compatible. Jujutsu-aware. Human-first.</h2>
+        <div class="bridge-grid">
+          <div>
+            <h3>Git is still real</h3>
+            <p>Snapshots live as real Git objects behind hidden refs. Push and pull still work.</p>
+          </div>
+          <div>
+            <h3>Jujutsu improves recovery</h3>
+            <p>When `jj` is available, `jjk` initializes colocated support and imports shared state.</p>
+          </div>
+          <div>
+            <h3>The meaning layer is explicit</h3>
+            <p>Labels, lanes, timeshifts, and freezes live in `.jjk`, where humans and agents can read them.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="future shell">
+        <div class="section-kicker">direction</div>
+        <h2>Stateful development should scale to parallel futures.</h2>
+        <p>
+          This repo ships the core safe-space workflow now. The larger direction
+          includes deeper timeshift, promotion flows, PR Radar, Feature Harvest,
+          and richer human-agent orchestration across lanes and worktrees.
+        </p>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+  </html>

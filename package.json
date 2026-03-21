@@ -1,0 +1,15 @@
+{
+  "name": "jjk",
+  "version": "0.1.0",
+  "description": "State-first development for humans and agents.",
+  "type": "module",
+  "packageManager": "bun@1.3.6",
+  "bin": {
+    "jjk": "./bin/jjk"
+  },
+  "scripts": {
+    "jjk": "bun run ./src/cli.ts",
+    "test": "bun test",
+    "site:serve": "bun run ./site/dev-server.ts"
+  }
+}

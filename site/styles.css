@@ -1,0 +1,243 @@
+:root {
+  --bg: #f4efe4;
+  --bg-strong: #e5d5b7;
+  --ink: #17130d;
+  --muted: #665a49;
+  --accent: #a64b2a;
+  --accent-2: #0d5c63;
+  --card: rgba(255, 250, 240, 0.72);
+  --border: rgba(23, 19, 13, 0.14);
+  --shadow: 0 20px 60px rgba(40, 24, 14, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at top left, rgba(166, 75, 42, 0.18), transparent 30%),
+    radial-gradient(circle at bottom right, rgba(13, 92, 99, 0.18), transparent 35%),
+    linear-gradient(180deg, #faf5eb 0%, var(--bg) 100%);
+  color: var(--ink);
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+  min-height: 100vh;
+}
+
+.orb {
+  position: fixed;
+  width: 22rem;
+  height: 22rem;
+  border-radius: 50%;
+  filter: blur(40px);
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.orb-a {
+  top: -7rem;
+  right: -6rem;
+  background: rgba(166, 75, 42, 0.25);
+}
+
+.orb-b {
+  left: -8rem;
+  bottom: 10rem;
+  background: rgba(13, 92, 99, 0.22);
+}
+
+.shell {
+  width: min(1100px, calc(100vw - 2rem));
+  margin: 0 auto;
+}
+
+.hero,
+section {
+  position: relative;
+  padding: 4rem 0;
+}
+
+.eyebrow,
+.section-kicker {
+  font-family: "Avenir Next Condensed", "Gill Sans Nova", "Trebuchet MS", sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--accent);
+  font-size: 0.82rem;
+}
+
+h1,
+h2,
+h3 {
+  font-family: "Avenir Next Condensed", "Franklin Gothic Medium", sans-serif;
+  line-height: 0.94;
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(3.6rem, 10vw, 7.4rem);
+  max-width: 11ch;
+  margin-top: 0.5rem;
+}
+
+h2 {
+  font-size: clamp(2.2rem, 5vw, 4.2rem);
+  max-width: 12ch;
+  margin-top: 0.7rem;
+}
+
+h3 {
+  font-size: 1.4rem;
+}
+
+.lede,
+.problem p,
+.concepts p,
+.bridge p,
+.future p,
+.demo-copy {
+  color: var(--muted);
+  font-size: 1.08rem;
+  line-height: 1.7;
+}
+
+.hero-actions {
+  display: flex;
+  gap: 0.9rem;
+  margin: 1.8rem 0 2rem;
+  flex-wrap: wrap;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.9rem 1.2rem;
+  background: var(--ink);
+  color: #fff7ef;
+  text-decoration: none;
+  border-radius: 999px;
+  font-family: "Avenir Next Condensed", "Gill Sans Nova", sans-serif;
+  letter-spacing: 0.04em;
+}
+
+.button-secondary {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--border);
+}
+
+.terminal-card,
+.demo-panel,
+.problem article,
+.concept-grid article,
+.bridge-grid > div {
+  background: var(--card);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+}
+
+.terminal-card {
+  border-radius: 1.6rem;
+  overflow: hidden;
+  max-width: 48rem;
+}
+
+.terminal-bar {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.terminal-bar span {
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 50%;
+  background: var(--bg-strong);
+}
+
+pre {
+  margin: 0;
+  padding: 1.4rem;
+  overflow-x: auto;
+  font-size: 0.98rem;
+  line-height: 1.6;
+  color: var(--ink);
+  font-family: "SF Mono", "Cascadia Code", "JetBrains Mono", monospace;
+}
+
+.problem-grid,
+.concept-grid,
+.bridge-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 1.8rem;
+}
+
+.problem article,
+.concept-grid article,
+.bridge-grid > div {
+  padding: 1.2rem;
+  border-radius: 1.3rem;
+}
+
+.demo-layout {
+  display: grid;
+  grid-template-columns: 15rem 1fr;
+  gap: 1rem;
+  margin-top: 1.8rem;
+}
+
+.demo-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.demo-controls button {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 1rem;
+  padding: 0.95rem 1rem;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  transition: transform 160ms ease, background 160ms ease;
+}
+
+.demo-controls button.active,
+.demo-controls button:hover {
+  background: #fff8ef;
+  transform: translateX(4px);
+}
+
+.demo-panel {
+  padding: 0;
+  border-radius: 1.5rem;
+  overflow: hidden;
+}
+
+#demo-copy {
+  padding: 0 1.4rem 1.4rem;
+}
+
+@media (max-width: 800px) {
+  .problem-grid,
+  .concept-grid,
+  .bridge-grid,
+  .demo-layout {
+    grid-template-columns: 1fr;
+  }
+
+  h1 {
+    max-width: 8ch;
+  }
+}
