@@ -49,8 +49,7 @@ export function defaultLabel(kind: StateKind, description: string): string {
     return kind;
   }
 
-  const base = trimmed.length > 48 ? `${trimmed.slice(0, 45)}...` : trimmed;
-  return `${kind} ${base}`.trim();
+  return trimmed.length > 48 ? `${trimmed.slice(0, 45)}...` : trimmed;
 }
 
 export function formatDate(value: string): string {

@@ -17,6 +17,7 @@ import {
   isJjRepo,
   pickStateChanges,
   pullFastForward,
+  pruneJjKeepRefs,
   pushCurrentBranchAndStateRefs,
   switchToDetachedCommit,
   worktreeMatchesCommit,
@@ -88,6 +89,7 @@ Flow:
   jjk freeze [state]
   jjk timeshift save [label]
   jjk timeshift restore <id>
+  jjk snapshots <on|off>
 
 Shell:
   jjk
@@ -112,6 +114,10 @@ async function promptForState(states: StateRecord[]): Promise<StateRecord> {
 async function handleSave(root: string, request: SaveStateRequest): Promise<void> {
   const result = saveState(root, request);
   console.log(renderStateSummary(result.state));
+}
+
+function shouldColorizeOutput(): boolean {
+  return Boolean(process.stdout.isTTY) && process.env.NO_COLOR === undefined;
 }
 
 function scanForMapHits(start: string, maxDepth = 4): MapHit[] {
@@ -293,6 +299,7 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
     case "see": {
       const repo = loadRepo(root);
       const headCommit = getHeadCommit(root);
+      const colorize = shouldColorizeOutput();
       const currentState =
         repo.states.find((state) => state.commit === headCommit) ??
         (() => {
@@ -300,9 +307,9 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
           const laneName = repo.branchLaneMap[branch];
           return laneName ? repo.states.find((state) => state.id === repo.lanes[laneName]?.currentStateId) ?? null : null;
         })();
-      console.log(renderGraph(repo, { currentStateId: currentState?.id ?? null }));
+      console.log(renderGraph(repo, { currentStateId: currentState?.id ?? null, colorize }));
       console.log("");
-      console.log(renderStateTable(listStates(root)));
+      console.log(renderStateTable(listStates(root), { colorize }));
       return;
     }
     case "story":
@@ -508,6 +515,26 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
         )}\n`,
       );
       console.log(`freeze created: ${formatRelativePath(root, bundlePath)}`);
+      return;
+    }
+    case "snapshots": {
+      const mode = (args[1] ?? "").trim().toLowerCase();
+      if (mode !== "on" && mode !== "off") {
+        throw new Error("Usage: jjk snapshots <on|off>");
+      }
+
+      const repo = loadRepo(root);
+      repo.settings.showWorkspaceSnapshotsInGit = mode === "on";
+      saveRepo(root, repo);
+
+      if (mode === "off") {
+        const removed = pruneJjKeepRefs(root);
+        console.log(`git workspace snapshots hidden (${removed} refs removed)`);
+        return;
+      }
+
+      importIntoJj(root);
+      console.log("git workspace snapshots enabled");
       return;
     }
     case "timeshift": {

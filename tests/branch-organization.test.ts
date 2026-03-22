@@ -53,18 +53,26 @@ describe("branch organization", () => {
     expect(fastPurple?.continuationBranch).toBe("jjk/purple");
     expect(fastOrange?.branch).toBe("jjk/orange");
     expect(fastOrange?.continuationBranch).toBe("jjk/orange");
+    expect(purple?.parentStateId).toBe(green?.id);
+    expect(orange?.parentStateId).toBe(green?.id);
+    expect(fastPurple?.parentStateId).toBe(purple?.id);
 
     expect(run(["git", "rev-parse", "--verify", "refs/heads/jjk/green"], { cwd }).stdout.length).toBeGreaterThan(10);
     expect(run(["git", "rev-parse", "--verify", "refs/heads/jjk/purple"], { cwd }).stdout.length).toBeGreaterThan(10);
     expect(run(["git", "rev-parse", "--verify", "refs/heads/jjk/orange"], { cwd }).stdout.length).toBeGreaterThan(10);
     expect(run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], { cwd }).stdout).toBe("jjk/orange");
+    expect(run(["git", "rev-parse", `${purple?.commit}^`], { cwd }).stdout).toBe(green?.commit);
+    expect(run(["git", "rev-parse", `${orange?.commit}^`], { cwd }).stdout).toBe(green?.commit);
+    expect(run(["git", "rev-parse", `${fastPurple?.commit}^`], { cwd }).stdout).toBe(purple?.commit);
 
     const graph = renderGraph(repo, { currentStateId: fastOrange?.id ?? null });
     const table = renderStateTable(repo.states);
-    expect(graph).toContain("[save] save purple (jjk/purple)");
-    expect(graph).toContain("[save] save orange (jjk/orange)");
-    expect(graph).toContain("[save] save fast_purple (jjk/purple)");
-    expect(graph).toContain("[nice] nice fast_orange (jjk/orange)");
+    const main = repo.states.find((state) => state.description === "main");
+    expect(graph).toContain(`└─  ^ ${main?.id} [save] main (main)`);
+    expect(graph).toContain(`└─  ^ ${green?.id} [save] green (jjk/green)`);
+    expect(graph).toContain(`├─    ${purple?.id} [save] purple (jjk/purple)`);
+    expect(graph).toContain(`└─  ^ ${fastPurple?.id} [save] fast_purple (jjk/purple)`);
+    expect(graph).toContain(`└─ *^ ${fastOrange?.id} [nice] fast_orange (jjk/orange)`);
     expect(table).toContain("jjk/purple");
     expect(table).toContain("jjk/orange");
   });

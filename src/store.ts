@@ -99,6 +99,7 @@ export function initSafeSpace(startCwd: string): { root: string; repo: RepoData 
       settings: {
         watchDebounceMs: 1200,
         autoStatePrefix: "auto",
+        showWorkspaceSnapshotsInGit: false,
       },
       states: [],
       lanes: {},
@@ -165,6 +166,27 @@ function getLatestStateOnBranch(repo: RepoData, branch: string): StateRecord | n
   return null;
 }
 
+function buildStateCommitMessage(input: {
+  kind: string;
+  label: string;
+  description: string;
+  branch: string;
+  lane: string;
+  continuationBranch?: string | null;
+}): string {
+  const displayBranch = input.continuationBranch ?? input.branch;
+  const subject = `${input.label} [${input.kind}] (${displayBranch}) - jjk`;
+  const body = [
+    `Kind: ${input.kind}`,
+    `Label: ${input.label}`,
+    `Description: ${input.description}`,
+    `Branch: ${input.branch}`,
+    `Lane: ${input.lane}`,
+    `Continuation-Branch: ${input.continuationBranch ?? "none"}`,
+  ].join("\n");
+  return `${subject}\n\n${body}`;
+}
+
 export function saveState(
   root: string,
   request: SaveStateRequest,
@@ -212,23 +234,10 @@ export function saveState(
       ? continuationBranchName(description)
       : undefined;
   const lane = ensureLane(repo, branch, laneName, baseRef);
-  const snapshot = createSnapshotCommit(
-    root,
-    `jjk ${request.kind}: ${description}`,
-    {
-      targetBranch: commitTargetBranch,
-    },
-  );
-
-  const checkedOutStateId =
-    headCommit
-      ? repo.states.find((state) => state.commit === headCommit)?.id ?? null
+  const logicalParentState =
+    branch === "main" && !saveOnMain && lane.currentStateId
+      ? repo.states.find((state) => state.id === lane.currentStateId) ?? null
       : null;
-  const parentStateId =
-    checkedOutStateId ??
-    lane.currentStateId ??
-    repo.states.find((state) => state.commit === snapshot.parentCommit)?.id ??
-    null;
   const continuationBranch =
     options.continuationBranch !== undefined
       ? options.continuationBranch
@@ -239,6 +248,33 @@ export function saveState(
         : branch === "main"
           ? continuationBranchName(description)
           : null;
+  const commitMessage = buildStateCommitMessage({
+    kind: request.kind,
+    label,
+    description,
+    branch,
+    lane: lane.name,
+    continuationBranch,
+  });
+  const snapshot = createSnapshotCommit(
+    root,
+    commitMessage,
+    {
+      parentCommit: logicalParentState?.commit ?? undefined,
+      targetBranch: commitTargetBranch,
+    },
+  );
+
+  const checkedOutStateId =
+    headCommit
+      ? repo.states.find((state) => state.commit === headCommit)?.id ?? null
+      : null;
+  const parentStateId =
+    logicalParentState?.id ??
+    checkedOutStateId ??
+    lane.currentStateId ??
+    repo.states.find((state) => state.commit === snapshot.parentCommit)?.id ??
+    null;
 
   const state: StateRecord = {
     id: shortId(),
@@ -455,7 +491,7 @@ export function promoteState(
     ...source,
     id: shortId(),
     kind,
-    label: `${kind} ${source.label}`.slice(0, 96),
+    label: (description?.trim() || source.label).slice(0, 96),
     description: description?.trim() || source.description,
     createdAt: nowIso(),
     parentStateId: source.id,

@@ -39,6 +39,6 @@ describe("status command", () => {
     const text = output.join("\n");
     expect(text).toContain("current lane: main");
     expect(text).toContain("worktree: dirty");
-    expect(text).toContain(`latest state: ${state.id} [step] step baseline ready`);
+    expect(text).toContain(`latest state: ${state.id} [step] baseline ready`);
   });
 });

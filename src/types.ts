@@ -58,6 +58,7 @@ export interface FreezeRecord {
 export interface RepoSettings {
   watchDebounceMs: number;
   autoStatePrefix: string;
+  showWorkspaceSnapshotsInGit?: boolean;
 }
 
 export interface ReturnContext {

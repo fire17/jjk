@@ -2,6 +2,9 @@ import type { LaneRecord, MapHit, RepoData, StateRecord, TimeshiftRecord } from 
 import type { AheadBehindStatus, WorktreeStatus } from "./git";
 import { formatDate, pad, stateDisplayBranch } from "./utils";
 
+const ANSI_RESET = "\u001b[0m";
+const BRANCH_COLOR_PALETTE = [39, 42, 45, 69, 111, 150, 178, 208, 214];
+
 export function renderStateSummary(state: StateRecord): string {
   return [
     `${state.id}`,
@@ -17,16 +20,21 @@ export function renderGraph(
   repo: RepoData,
   options?: {
     currentStateId?: string | null;
+    colorize?: boolean;
   },
 ): string {
   const sorted = repo.states
     .slice()
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   const children = new Map<string | null, StateRecord[]>();
+  const latestByDisplayBranch = new Map<string, StateRecord>();
+
+  for (const state of sorted) {
+    latestByDisplayBranch.set(stateDisplayBranch(state), state);
+  }
+
   const leafStateIds = new Set(
-    Object.values(repo.lanes)
-      .map((lane) => lane.currentStateId)
-      .filter((stateId): stateId is string => Boolean(stateId)),
+    Array.from(latestByDisplayBranch.values()).map((state) => state.id),
   );
 
   for (const state of sorted) {
@@ -45,9 +53,11 @@ export function renderGraph(
       const isLast = index === nodes.length - 1;
       const connector = isLast ? "└─" : "├─";
       const currentMarker = state.id === options?.currentStateId ? "*" : " ";
-      const leafMarker = leafStateIds.has(state.id) ? "^" : " ";
+      const isLeaf = leafStateIds.has(state.id);
+      const leafMarker = isLeaf ? "^" : " ";
+      const line = `${prefix}${connector} ${currentMarker}${leafMarker} ${state.id} [${state.kind}] ${state.label} (${stateDisplayBranch(state)})`;
       lines.push(
-        `${prefix}${connector} ${currentMarker}${leafMarker} ${state.id} [${state.kind}] ${state.label} (${stateDisplayBranch(state)})`,
+        colorizeBranchLine(line, stateDisplayBranch(state), options?.colorize === true, isLeaf),
       );
       walk(state.id, `${prefix}${isLast ? "   " : "│  "}`);
     });
@@ -58,10 +68,15 @@ export function renderGraph(
     return "No states saved yet.";
   }
 
-  return ["* current state    ^ lane leaf", "", ...lines].join("\n");
+  return ["* current state    ^ branch leaf", "", ...lines].join("\n");
 }
 
-export function renderStateTable(states: StateRecord[]): string {
+export function renderStateTable(
+  states: StateRecord[],
+  options?: {
+    colorize?: boolean;
+  },
+): string {
   if (states.length === 0) {
     return "No states saved yet.";
   }
@@ -69,14 +84,56 @@ export function renderStateTable(states: StateRecord[]): string {
   const lines = [
     `${pad("id", 10)} ${pad("kind", 6)} ${pad("lane", 16)} ${pad("branch", 18)} label`,
   ];
+  const latestByDisplayBranch = new Map<string, StateRecord>();
 
   for (const state of states) {
+    latestByDisplayBranch.set(stateDisplayBranch(state), state);
+  }
+  const leafStateIds = new Set(
+    Array.from(latestByDisplayBranch.values()).map((state) => state.id),
+  );
+
+  for (const state of states) {
+    const line = `${pad(state.id, 10)} ${pad(state.kind, 6)} ${pad(stateDisplayBranch(state), 16)} ${pad(stateDisplayBranch(state), 18)} ${state.label}`;
     lines.push(
-      `${pad(state.id, 10)} ${pad(state.kind, 6)} ${pad(stateDisplayBranch(state), 16)} ${pad(stateDisplayBranch(state), 18)} ${state.label}`,
+      colorizeBranchLine(
+        line,
+        stateDisplayBranch(state),
+        options?.colorize === true,
+        leafStateIds.has(state.id),
+      ),
     );
   }
 
   return lines.join("\n");
+}
+
+function colorizeBranchLine(
+  line: string,
+  branch: string,
+  enabled: boolean,
+  isLeaf: boolean,
+): string {
+  if (!enabled) {
+    return line;
+  }
+
+  const color = branchAnsiColor(branch);
+  const dim = isLeaf ? "" : "\u001b[2m";
+  return `${dim}\u001b[38;5;${color}m${line}${ANSI_RESET}`;
+}
+
+function branchAnsiColor(branch: string): number {
+  if (branch === "main") {
+    return 111;
+  }
+
+  let hash = 0;
+  for (let index = 0; index < branch.length; index += 1) {
+    hash = (hash * 31 + branch.charCodeAt(index)) >>> 0;
+  }
+
+  return BRANCH_COLOR_PALETTE[hash % BRANCH_COLOR_PALETTE.length] ?? 111;
 }
 
 export function renderStory(states: StateRecord[]): string {

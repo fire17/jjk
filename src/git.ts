@@ -13,6 +13,13 @@ import { run } from "./shell";
 
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
+interface CommitNode {
+  hash: string;
+  parents: string[];
+  children: string[];
+  subject: string;
+}
+
 export interface WorktreeStatus {
   dirty: boolean;
   changedFiles: number;
@@ -68,6 +75,7 @@ export function importIntoJj(cwd: string): void {
     return;
   }
   run(["jj", "git", "import"], { cwd, allowFailure: true });
+  syncJjKeepRefs(cwd);
 }
 
 export function exportFromJj(cwd: string): void {
@@ -75,6 +83,235 @@ export function exportFromJj(cwd: string): void {
     return;
   }
   run(["jj", "git", "export"], { cwd, allowFailure: true });
+  syncJjKeepRefs(cwd);
+}
+
+function syncJjKeepRefs(cwd: string): void {
+  if (!shouldShowWorkspaceSnapshotsInGit(cwd)) {
+    pruneJjKeepRefs(cwd);
+    return;
+  }
+
+  normalizeJjKeepCommitMessages(cwd);
+}
+
+function shouldShowWorkspaceSnapshotsInGit(cwd: string): boolean {
+  const repoFile = join(cwd, ".jjk", "repo.json");
+  if (!existsSync(repoFile)) {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(repoFile, "utf8")) as {
+      settings?: {
+        showWorkspaceSnapshotsInGit?: boolean;
+      };
+    };
+    return parsed.settings?.showWorkspaceSnapshotsInGit === true;
+  } catch {
+    return false;
+  }
+}
+
+export function pruneJjKeepRefs(cwd: string): number {
+  const keepRefs = run(
+    ["git", "for-each-ref", "--format=%(refname)", "refs/jj/keep"],
+    { cwd, allowFailure: true },
+  ).stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  for (const ref of keepRefs) {
+    run(["git", "update-ref", "-d", ref], { cwd, allowFailure: true });
+  }
+
+  return keepRefs.length;
+}
+
+function normalizeJjKeepCommitMessages(cwd: string): void {
+  const keepRefs = run(
+    ["git", "for-each-ref", "--format=%(refname)%09%(subject)", "refs/jj/keep"],
+    { cwd, allowFailure: true },
+  ).stdout;
+  const snapshotRefs = keepRefs
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => line.split("\t"))
+    .filter(
+      (parts) =>
+        parts[0] &&
+        (!parts[1] ||
+          parts[1].trim().length === 0 ||
+          parts[1].trim() === "jjk workspace snapshot"),
+    )
+    .map((parts) => ({
+      ref: parts[0]!,
+      commit: parts[0]!.replace("refs/jj/keep/", ""),
+    }));
+
+  if (snapshotRefs.length === 0) {
+    return;
+  }
+
+  const commitGraph = loadCommitGraph(cwd);
+
+  for (const snapshot of snapshotRefs) {
+    const message = buildJjSnapshotMessage(snapshot.commit, commitGraph);
+    run(
+      [
+        "jj",
+        "describe",
+        "--ignore-working-copy",
+        "-r",
+        snapshot.commit,
+        "-m",
+        message,
+      ],
+      { cwd, allowFailure: true },
+    );
+  }
+
+  run(["jj", "git", "export", "--ignore-working-copy"], { cwd, allowFailure: true });
+
+  for (const snapshot of snapshotRefs) {
+    run(["git", "update-ref", "-d", snapshot.ref], { cwd, allowFailure: true });
+  }
+}
+
+function loadCommitGraph(cwd: string): Map<string, CommitNode> {
+  const lines = run(
+    ["git", "log", "--all", "--format=%H%x1f%P%x1f%s%x1e", "-n", "400"],
+    { cwd, allowFailure: true },
+  ).stdout
+    .split("\x1e")
+    .map((record) => record.trim())
+    .filter(Boolean);
+
+  const nodes = new Map<string, CommitNode>();
+  for (const line of lines) {
+    const [hash = "", parentsRaw = "", subject = ""] = line.split("\x1f");
+    if (!hash) {
+      continue;
+    }
+    nodes.set(hash, {
+      hash,
+      parents: parentsRaw.split(" ").filter(Boolean),
+      children: [],
+      subject: subject.trim(),
+    });
+  }
+
+  for (const node of nodes.values()) {
+    for (const parent of node.parents) {
+      const parentNode = nodes.get(parent);
+      if (parentNode) {
+        parentNode.children.push(node.hash);
+      }
+    }
+  }
+
+  return nodes;
+}
+
+function buildJjSnapshotMessage(commit: string, graph: Map<string, CommitNode>): string {
+  const node = graph.get(commit);
+  const shortCommit = commit.slice(0, 8);
+  const ancestor = node ? findNearestNamedCommit(node.parents, graph, "parents") : null;
+  const descendant = node ? findNearestNamedCommit(node.children, graph, "children") : null;
+  const subject = buildJjSnapshotSubject(node, shortCommit, ancestor, descendant);
+  const body = [
+    "Generated automatically by jjk Jujutsu integration.",
+    `Snapshot-Commit: ${commit}`,
+    `Parent-Count: ${node?.parents.length ?? 0}`,
+    `Child-Count: ${node?.children.length ?? 0}`,
+    `Nearest-Ancestor-State: ${formatSnapshotContext(ancestor)}`,
+    `Nearest-Descendant-State: ${formatSnapshotContext(descendant)}`,
+  ].join("\n");
+  return `${subject}\n\n${body}`;
+}
+
+function buildJjSnapshotSubject(
+  node: CommitNode | undefined,
+  shortCommit: string,
+  ancestor: CommitNode | null,
+  descendant: CommitNode | null,
+): string {
+  const ancestorLabel = shortSnapshotLabel(ancestor);
+  const descendantLabel = shortSnapshotLabel(descendant);
+
+  if (ancestorLabel && descendantLabel && ancestor?.hash !== descendant?.hash) {
+    return `jjk workspace snapshot between ${ancestorLabel} and ${descendantLabel} (${shortCommit})`;
+  }
+
+  if (descendantLabel) {
+    return `jjk workspace snapshot before ${descendantLabel} (${shortCommit})`;
+  }
+
+  if (ancestorLabel) {
+    return `jjk workspace snapshot after ${ancestorLabel} (${shortCommit})`;
+  }
+
+  if (!node || node.parents.length === 0) {
+    return `jjk workspace root snapshot (${shortCommit})`;
+  }
+
+  if (node.children.length === 0) {
+    return `jjk workspace leaf snapshot (${shortCommit})`;
+  }
+
+  return `jjk workspace orphan snapshot (${shortCommit})`;
+}
+
+function shortSnapshotLabel(node: CommitNode | null): string | null {
+  if (!node || !node.subject) {
+    return null;
+  }
+
+  return node.subject.replace(/^jjk\s+/, "");
+}
+
+function formatSnapshotContext(node: CommitNode | null): string {
+  if (!node) {
+    return "none";
+  }
+
+  return `${node.hash.slice(0, 8)} ${node.subject}`;
+}
+
+function findNearestNamedCommit(
+  roots: string[],
+  graph: Map<string, CommitNode>,
+  direction: "parents" | "children",
+): CommitNode | null {
+  const queue = [...roots];
+  const seen = new Set<string>();
+
+  while (queue.length > 0) {
+    const currentHash = queue.shift();
+    if (!currentHash || seen.has(currentHash)) {
+      continue;
+    }
+    seen.add(currentHash);
+
+    const current = graph.get(currentHash);
+    if (!current) {
+      continue;
+    }
+
+    if (isMeaningfulSnapshotContext(current.subject)) {
+      return current;
+    }
+
+    queue.push(...current[direction]);
+  }
+
+  return null;
+}
+
+function isMeaningfulSnapshotContext(subject: string): boolean {
+  const normalized = subject.trim();
+  return normalized.length > 0 && !normalized.startsWith("jjk workspace snapshot");
 }
 
 export function getCurrentBranch(cwd: string): string {
@@ -131,6 +368,7 @@ export function createSnapshotCommit(
   message: string,
   options?: {
     targetBranch?: string;
+    parentCommit?: string | null;
   },
 ): {
   commit: string;
@@ -141,11 +379,31 @@ export function createSnapshotCommit(
   const currentBranch = getCurrentBranchName(cwd);
   const targetBranch = options?.targetBranch;
   if (targetBranch && targetBranch !== currentBranch) {
-    return createCommitForRef(cwd, message, targetBranch);
+    return createCommitForRef(cwd, message, targetBranch, options?.parentCommit);
   }
-  const parentCommit = getHeadCommit(cwd);
+  const parentCommit = options?.parentCommit ?? getHeadCommit(cwd);
   run(["git", "add", "--all", "--", "."], { cwd });
   const changedFiles = countStatusEntries(cwd);
+  if (options?.parentCommit && options.parentCommit !== getHeadCommit(cwd)) {
+    const tempDir = mkdtempSync(join(tmpdir(), "jjk-index-"));
+    const tempIndex = join(tempDir, "index");
+    const env = { GIT_INDEX_FILE: tempIndex };
+
+    try {
+      run(["git", "read-tree", options.parentCommit], { cwd, env });
+      run(["git", "add", "--all", "--", "."], { cwd, env });
+      const tree = run(["git", "write-tree"], { cwd, env }).stdout;
+      const commit = run(
+        ["git", "commit-tree", tree, "-m", message, "-p", options.parentCommit],
+        { cwd, env: commitIdentityEnv(env) },
+      ).stdout;
+      updateRef(cwd, "HEAD", commit);
+      return { commit, parentCommit, changedFiles };
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  }
+
   run(["git", "commit", "--allow-empty", "-m", message], {
     cwd,
     env: commitIdentityEnv(),
@@ -158,6 +416,7 @@ function createCommitForRef(
   cwd: string,
   message: string,
   targetBranch: string,
+  parentCommitOverride?: string | null,
 ): {
   commit: string;
   parentCommit: string | null;
@@ -174,7 +433,7 @@ function createCommitForRef(
     );
     const parentCommit = targetHead.exitCode === 0
       ? targetHead.stdout
-      : getHeadCommit(cwd);
+      : parentCommitOverride ?? getHeadCommit(cwd);
 
     if (parentCommit) {
       run(["git", "read-tree", parentCommit], { cwd, env });

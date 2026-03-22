@@ -10,8 +10,10 @@ describe("utils", () => {
     expect(branchSegment("Fast mode only")).toBe("Fast_mode_only");
   });
 
-  test("defaultLabel includes kind", () => {
-    expect(defaultLabel("nice", "green tests after parser cleanup")).toContain("nice");
+  test("defaultLabel uses the description without a kind prefix", () => {
+    expect(defaultLabel("nice", "green tests after parser cleanup")).toBe(
+      "green tests after parser cleanup",
+    );
   });
 
   test("parseWords keeps quoted content together", () => {
