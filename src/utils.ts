@@ -93,6 +93,12 @@ export function stateHasStar(state: {
   return state.kind === "star" || state.tags.includes("star");
 }
 
+export function stateHasTag(state: {
+  tags: string[];
+}, tag: string): boolean {
+  return state.tags.includes(tag);
+}
+
 export function formatDate(value: string): string {
   return new Intl.DateTimeFormat("en", {
     dateStyle: "medium",

@@ -65,6 +65,8 @@ import {
   saveRepo,
   isTipStateOnBranch,
   starState,
+  toggleStateTag,
+  unstarState,
   stashWorkspace,
   undoWorkspaceSnapshot,
   updateBranchTarget,
@@ -99,7 +101,10 @@ States:
   jjk save [description]
   jjk step [description]
   jjk nice [description]
-  jjk star [description]
+  jjk star [state]
+  jjk unstar [state]
+  jjk thumbsup [state]
+  jjk thumbsdown [state]
   jjk stash [description]
   jjk see [--deleted]
   jjk show [state]
@@ -331,6 +336,16 @@ function getCurrentStateHistoryEntry(repo: RepoData): string | null {
     return null;
   }
   return history.entries[history.index] ?? null;
+}
+
+function resolveMarkerTarget(root: string, query: string): StateRecord {
+  const target = query.length > 0
+    ? resolveState(root, query)
+    : resolveCurrentState(root, loadRepo(root).states);
+  if (!target) {
+    throw new Error("No current state is available.");
+  }
+  return target;
 }
 
 function syncCurrentStateHistory(root: string, currentStateId: string | null): RepoData {
@@ -701,22 +716,30 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       await handleSave(root, buildSaveRequest(command, args.slice(1).join(" ")));
       return;
     case "star": {
-      const input = args.slice(1).join(" ").trim();
-      if (input.length > 0) {
-        try {
-          const target = resolveState(root, input);
-          const starred = starState(root, target.id);
-          recordWorkspaceSnapshot(root, `star:${starred.id}`);
-          console.log(`starred ${shortStateId(starred.id)} ${starred.label}`);
-          console.log(renderStateSummary(starred));
-          return;
-        } catch (error) {
-          if (!(error instanceof Error) || !error.message.startsWith("No state matched")) {
-            throw error;
-          }
-        }
-      }
-      await handleSave(root, buildSaveRequest(command, args.slice(1).join(" ")));
+      const target = resolveMarkerTarget(root, args.slice(1).join(" ").trim());
+      const starred = starState(root, target.id);
+      recordWorkspaceSnapshot(root, `star:${starred.id}`);
+      console.log(`starred ${shortStateId(starred.id)} ${starred.label}`);
+      console.log(renderStateSummary(starred));
+      return;
+    }
+    case "unstar": {
+      const target = resolveMarkerTarget(root, args.slice(1).join(" ").trim());
+      const unstarred = unstarState(root, target.id);
+      recordWorkspaceSnapshot(root, `unstar:${unstarred.id}`);
+      console.log(`unstarred ${shortStateId(unstarred.id)} ${unstarred.label}`);
+      console.log(renderStateSummary(unstarred));
+      return;
+    }
+    case "thumbsup":
+    case "thumbsdown": {
+      const target = resolveMarkerTarget(root, args.slice(1).join(" ").trim());
+      const tag = command;
+      const updated = toggleStateTag(root, target.id, tag);
+      recordWorkspaceSnapshot(root, `${tag}:${updated.id}`);
+      const enabled = updated.tags.includes(tag);
+      console.log(`${enabled ? "enabled" : "disabled"} ${tag} on ${shortStateId(updated.id)} ${updated.label}`);
+      console.log(renderStateSummary(updated));
       return;
     }
     case "stash": {

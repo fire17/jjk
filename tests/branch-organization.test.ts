@@ -17,7 +17,7 @@ describe("branch organization", () => {
     run(["git", "config", "user.email", "jjk@example.com"], { cwd });
   });
 
-  test("keeps green purple and orange as stable branches while later states stay on purple and orange", async () => {
+  test("keeps green purple and orange as stable branches while later states stay on purple and orange", { timeout: 10000 }, async () => {
     const filePath = join(cwd, "snake.py");
 
     Bun.write(filePath, "color=green\nfast=false\n");

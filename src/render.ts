@@ -6,6 +6,7 @@ import {
   pad,
   shortCommit,
   shortStateId,
+  stateHasTag,
   stateHasStar,
   stateDisplayBranch,
   stateGitCommit,
@@ -79,7 +80,12 @@ function formatStateGraphLine(text: string, state: StateRecord): string {
 }
 
 function stateLabelWithMarkers(state: StateRecord): string {
-  const prefix = stateHasStar(state) ? "★ " : "";
+  const markers = [
+    stateHasStar(state) ? "★" : "",
+    stateHasTag(state, "thumbsup") ? "👍" : "",
+    stateHasTag(state, "thumbsdown") ? "👎" : "",
+  ].filter(Boolean);
+  const prefix = markers.length > 0 ? `${markers.join("")} ` : "";
   return `${prefix}${state.label}`;
 }
 

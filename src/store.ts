@@ -1553,17 +1553,46 @@ export function recordFreeze(root: string, stateId: string): FreezeRecord {
 }
 
 export function starState(root: string, stateId: string): StateRecord {
+  return setStateTag(root, stateId, "star", true);
+}
+
+export function unstarState(root: string, stateId: string): StateRecord {
+  return setStateTag(root, stateId, "star", false);
+}
+
+export function toggleStateTag(root: string, stateId: string, tag: string): StateRecord {
   const repo = loadRepo(root);
   const state = repo.states.find((entry) => entry.id === stateId);
   if (!state) {
     throw new Error(`No state matched \`${stateId}\`.`);
   }
   if (isDeletedState(state)) {
-    throw new Error(`Cannot star deleted state \`${stateId}\`.`);
+    throw new Error(`Cannot toggle tag on deleted state \`${stateId}\`.`);
   }
 
-  if (!state.tags.includes("star")) {
-    state.tags = [...state.tags, "star"];
+  const enabled = !state.tags.includes(tag);
+  state.tags = enabled
+    ? [...state.tags, tag]
+    : state.tags.filter((entry) => entry !== tag);
+  saveRepo(root, repo);
+  return state;
+}
+
+function setStateTag(root: string, stateId: string, tag: string, enabled: boolean): StateRecord {
+  const repo = loadRepo(root);
+  const state = repo.states.find((entry) => entry.id === stateId);
+  if (!state) {
+    throw new Error(`No state matched \`${stateId}\`.`);
+  }
+  if (isDeletedState(state)) {
+    throw new Error(`Cannot change tags on deleted state \`${stateId}\`.`);
+  }
+
+  if (enabled && !state.tags.includes(tag)) {
+    state.tags = [...state.tags, tag];
+    saveRepo(root, repo);
+  } else if (!enabled && state.tags.includes(tag)) {
+    state.tags = state.tags.filter((entry) => entry !== tag);
     saveRepo(root, repo);
   }
 

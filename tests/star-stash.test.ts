@@ -33,19 +33,24 @@ describe("star and stash commands", () => {
     run(["git", "config", "user.email", "jjk@example.com"], { cwd });
   });
 
-  test("star saves a starred state and jjk see shows the star icon", async () => {
+  test("star without an argument marks the current state without creating a new state", async () => {
     const filePath = join(cwd, "notes.txt");
     Bun.write(filePath, "milestone\n");
 
-    await runCli(["star", "milestone"], cwd);
+    await runCli(["save", "milestone"], cwd);
+    const beforeRepo = loadRepo(cwd);
+    const state = beforeRepo.states.at(-1)!;
 
-    const state = loadRepo(cwd).states.at(-1)!;
+    await runCli(["star"], cwd);
+
+    const repo = loadRepo(cwd);
+    const starred = repo.states.find((entry) => entry.id === state.id)!;
     const output = await captureCli(["see"], cwd);
 
-    expect(state.kind).toBe("star");
-    expect(state.tags).toContain("star");
-    expect(output).toContain(`★ ${state.label}`);
-    expect(output).toContain("[star]");
+    expect(repo.states).toHaveLength(beforeRepo.states.length);
+    expect(starred.kind).toBe("save");
+    expect(starred.tags).toContain("star");
+    expect(output).toContain(`★ ${starred.label}`);
   });
 
   test("star with a state query marks the existing state instead of creating a new one", async () => {
@@ -66,6 +71,80 @@ describe("star and stash commands", () => {
     expect(starred.kind).toBe("new");
     expect(starred.tags).toContain("star");
     expect(output).toContain(`★ ${starred.label}`);
+  });
+
+  test("unstar without an argument unmarks the current state without creating a new state", async () => {
+    const filePath = join(cwd, "notes.txt");
+    Bun.write(filePath, "green\n");
+
+    await runCli(["green"], cwd);
+    const beforeRepo = loadRepo(cwd);
+    const green = beforeRepo.states.at(-1)!;
+
+    await runCli(["star"], cwd);
+    await runCli(["unstar"], cwd);
+
+    const repo = loadRepo(cwd);
+    const unstarred = repo.states.find((state) => state.id === green.id)!;
+    const output = await captureCli(["see"], cwd);
+
+    expect(repo.states).toHaveLength(beforeRepo.states.length);
+    expect(unstarred.tags).not.toContain("star");
+    expect(output).not.toContain(`★ ${unstarred.label}`);
+  });
+
+  test("thumbsup toggles on and off for the current state without creating a new state", async () => {
+    const filePath = join(cwd, "notes.txt");
+    Bun.write(filePath, "green\n");
+
+    await runCli(["green"], cwd);
+    const beforeRepo = loadRepo(cwd);
+    const green = beforeRepo.states.at(-1)!;
+
+    await runCli(["thumbsup"], cwd);
+    let repo = loadRepo(cwd);
+    let marked = repo.states.find((state) => state.id === green.id)!;
+    let output = await captureCli(["see"], cwd);
+
+    expect(repo.states).toHaveLength(beforeRepo.states.length);
+    expect(marked.tags).toContain("thumbsup");
+    expect(output).toContain(`👍 ${marked.label}`);
+
+    await runCli(["thumbsup"], cwd);
+    repo = loadRepo(cwd);
+    marked = repo.states.find((state) => state.id === green.id)!;
+    output = await captureCli(["see"], cwd);
+
+    expect(repo.states).toHaveLength(beforeRepo.states.length);
+    expect(marked.tags).not.toContain("thumbsup");
+    expect(output).not.toContain(`👍 ${marked.label}`);
+  });
+
+  test("thumbsdown toggles on and off for a selected state without creating a new state", async () => {
+    const filePath = join(cwd, "notes.txt");
+    Bun.write(filePath, "green\n");
+
+    await runCli(["green"], cwd);
+    const beforeRepo = loadRepo(cwd);
+    const green = beforeRepo.states.at(-1)!;
+
+    await runCli(["thumbsdown", green.id], cwd);
+    let repo = loadRepo(cwd);
+    let marked = repo.states.find((state) => state.id === green.id)!;
+    let output = await captureCli(["see"], cwd);
+
+    expect(repo.states).toHaveLength(beforeRepo.states.length);
+    expect(marked.tags).toContain("thumbsdown");
+    expect(output).toContain(`👎 ${marked.label}`);
+
+    await runCli(["thumbsdown", green.id], cwd);
+    repo = loadRepo(cwd);
+    marked = repo.states.find((state) => state.id === green.id)!;
+    output = await captureCli(["see"], cwd);
+
+    expect(repo.states).toHaveLength(beforeRepo.states.length);
+    expect(marked.tags).not.toContain("thumbsdown");
+    expect(output).not.toContain(`👎 ${marked.label}`);
   });
 
   test("stash captures the dirty workspace on a new branch without advancing the current branch", async () => {
