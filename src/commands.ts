@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
+import { fileURLToPath } from "node:url";
 import {
   addWorktree,
   commandExists,
@@ -17,6 +18,7 @@ import {
   hasDirtyWorktree,
   hasRemote,
   importIntoJj,
+  isGitIgnored,
   isJjRepo,
   localBranchExists,
   pickStateChanges,
@@ -152,6 +154,7 @@ Flow:
 
 Shell:
   jjk
+  jjk shell-init [zsh|bash]
 
 Examples:
   Basic:
@@ -193,6 +196,9 @@ Examples:
     jjk fork --worktree
     jjk worktree purple
     jjk checkout jjk/purple
+
+  Shell integration:
+    eval "$(jjk shell-init zsh)"
 `);
 }
 
@@ -266,6 +272,39 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+function shellWrapperPath(): string {
+  return resolve(dirname(fileURLToPath(import.meta.url)), "..", "bin", "jjk");
+}
+
+function renderShellInit(shell: string): string {
+  const normalizedShell = shell.trim().toLowerCase();
+  if (normalizedShell !== "zsh" && normalizedShell !== "bash") {
+    throw new Error("Usage: jjk shell-init [zsh|bash]");
+  }
+  const binaryPath = shellSingleQuote(shellWrapperPath());
+  return `jjk() {
+  local __jjk_output __jjk_status __jjk_cd
+  __jjk_output="$(JJK_CD_SENTINEL=1 ${binaryPath} "$@" 2>&1)"
+  __jjk_status=$?
+  __jjk_cd="$(printf '%s\\n' "$__jjk_output" | sed -n 's/^${CD_MARKER}//p' | tail -n 1)"
+  printf '%s\\n' "$__jjk_output" | sed '/^${CD_MARKER}/d'
+  if [ $__jjk_status -eq 0 ] && [ -n "$__jjk_cd" ]; then
+    builtin cd "$__jjk_cd"
+  fi
+  return $__jjk_status
+}`;
+}
+
+function emitDirectoryChange(path: string): void {
+  if (process.env.JJK_CD_SENTINEL === "1") {
+    console.log(`${CD_MARKER}${path}`);
+  }
+}
+
 function tryResolveState(root: string, query: string): StateRecord | null {
   const trimmed = query.trim();
   if (trimmed.length === 0) {
@@ -289,13 +328,13 @@ function uniqueBranchName(root: string, preferred: string): string {
 }
 
 function uniqueWorktreePath(root: string, branch: string): string {
-  const parent = dirname(root);
-  const repoName = basename(root);
-  const base = `${repoName}-${branchSegment(branch)}`;
-  let candidate = join(parent, base);
+  const worktreesRoot = join(root, ".worktrees");
+  mkdirSync(worktreesRoot, { recursive: true });
+  const base = branchSegment(branch);
+  let candidate = join(worktreesRoot, base);
   let suffix = 2;
   while (existsSync(candidate)) {
-    candidate = join(parent, `${base}-${suffix}`);
+    candidate = join(worktreesRoot, `${base}-${suffix}`);
     suffix += 1;
   }
   return candidate;
@@ -350,6 +389,7 @@ function printWorktreeReady(root: string, input: {
   console.log(`worktree ready: ${formatRelativePath(root, input.path)}`);
   console.log(`branch: ${input.branch}`);
   console.log(`state: ${shortStateId(input.state.id)} ${input.state.label}`);
+  emitDirectoryChange(input.path);
 }
 
 function normalizeBranchName(input: string): string {
@@ -400,6 +440,7 @@ function fetchBranchRefsForDisplay(root: string, repo: RepoData): Record<string,
 }
 
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+const CD_MARKER = "__JJK_CD__=";
 
 function runGitTextCommand(
   root: string,
@@ -696,6 +737,10 @@ function scanForMapHits(start: string, maxDepth = 4): MapHit[] {
       }
 
       const next = join(current, entry);
+      const relativeNext = formatRelativePath(start, next);
+      if (isGitIgnored(start, relativeNext)) {
+        continue;
+      }
       try {
         if (statSync(next).isDirectory()) {
           walk(next, depth + 1);
@@ -882,6 +927,11 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
 
   if (command === "help" || command === "/help" || command === "--help" || command === "-h" || command === "-help") {
     printHelp();
+    return;
+  }
+
+  if (command === "shell-init") {
+    console.log(renderShellInit(args[1] ?? process.env.SHELL?.split("/").pop() ?? "zsh"));
     return;
   }
 

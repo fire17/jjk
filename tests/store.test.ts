@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initSafeSpace, listStates, loadRepo, saveState } from "../src/store";
@@ -119,5 +119,22 @@ describe("store", () => {
     expect(imported?.parentStateId).toBe(green.id);
     expect(repo.currentStateHistory?.entries.at(-1)).toBe(imported?.id);
     expect(repo.lanes[repo.branchLaneMap["purple"] ?? ""]?.currentStateId).toBe(imported?.id);
+  });
+
+  test("init creates or updates .gitignore with .worktrees entries", () => {
+    const repoCwd = mkdtempSync(join(tmpdir(), "jjk-store-ignore-"));
+    run(["git", "init", "-b", "main"], { cwd: repoCwd });
+    writeFileSync(join(repoCwd, ".gitignore"), "dist/\n");
+
+    initSafeSpace(repoCwd);
+    const gitignore = readFileSync(join(repoCwd, ".gitignore"), "utf8");
+
+    expect(gitignore).toContain("dist/");
+    expect(gitignore).toContain(".worktrees/");
+    expect(gitignore).toContain(".worktrees/*");
+
+    initSafeSpace(repoCwd);
+    const repeated = readFileSync(join(repoCwd, ".gitignore"), "utf8");
+    expect(repeated.match(/\.worktrees\/\*/g)?.length).toBe(1);
   });
 });

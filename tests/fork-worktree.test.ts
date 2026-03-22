@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { runCli } from "../src/commands";
@@ -68,6 +68,7 @@ describe("fork and worktree commands", () => {
     const output = await captureCli(["fork", "--worktree"], cwd);
     const worktreePath = extractWorktreePath(output, cwd);
 
+    expect(output).toContain("worktree ready: .worktrees/jjk_green_fork");
     expect(output).toContain("branch: jjk/green_fork");
     expect(existsSync(worktreePath)).toBe(true);
     expect(existsSync(join(worktreePath, ".jjk", "repo.json"))).toBe(true);
@@ -88,6 +89,7 @@ describe("fork and worktree commands", () => {
     const output = await captureCli(["fork", "green", "--worktree"], cwd);
     const worktreePath = extractWorktreePath(output, cwd);
 
+    expect(output).toContain("worktree ready: .worktrees/jjk_green_fork");
     expect(output).toContain("branch: jjk/green_fork");
     expect(run(["git", "rev-parse", "HEAD"], { cwd: worktreePath }).stdout).toBe(green?.commit);
     expect(run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], { cwd: worktreePath }).stdout).toBe(
@@ -103,9 +105,28 @@ describe("fork and worktree commands", () => {
     const output = await captureCli(["worktree", "green"], cwd);
     const worktreePath = extractWorktreePath(output, cwd);
 
+    expect(output).toContain("worktree ready: .worktrees/jjk_green_worktree");
     expect(output).toContain("branch: jjk/green_worktree");
     expect(run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], { cwd: worktreePath }).stdout).toBe(
       "jjk/green_worktree",
     );
+  });
+
+  test("shell-init wrapper automatically cds into the created worktree", async () => {
+    const filePath = join(cwd, "notes.txt");
+    Bun.write(filePath, "green\n");
+    await runCli(["green"], cwd);
+
+    const binaryPath = join(process.cwd(), "bin", "jjk");
+    const expectedPath = join(cwd, ".worktrees", "jjk_green_fork");
+    const script = [
+      `eval "$(${binaryPath} shell-init zsh)"`,
+      `cd ${cwd}`,
+      "jjk fork --worktree >/dev/null",
+      "pwd",
+    ].join("; ");
+
+    const pwd = realpathSync(run(["zsh", "-lc", script], { cwd }).stdout);
+    expect(pwd).toBe(realpathSync(expectedPath));
   });
 });

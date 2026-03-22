@@ -67,6 +67,7 @@ describe("help output", () => {
     expect(long).toBe(base);
     expect(dash).toBe(base);
     expect(base).toContain("jjk graph [--deleted]");
+    expect(base).toContain("jjk shell-init [zsh|bash]");
     expect(base).toContain("Examples:");
     expect(base).toContain("Basic:");
     expect(base).toContain("Advanced flow:");
