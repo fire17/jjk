@@ -9,6 +9,7 @@ import {
   getCurrentBranch,
   getCurrentBranchName,
   hasHead,
+  localBranchExists,
   listGitCommitsForImport,
   getLocalBranchRefs,
   getHeadCommit,
@@ -1267,6 +1268,47 @@ export function createLane(root: string, name: string): LaneRecord {
   lane.currentStateId = lane.currentStateId ?? sourceStateId;
   repo.branchLaneMap[branchName] = lane.name;
   saveRepo(root, repo);
+  return lane;
+}
+
+export function attachBranchToState(root: string, branch: string, stateId: string): LaneRecord {
+  const repo = loadRepo(root);
+  const state = repo.states.find((candidate) => candidate.id === stateId);
+  if (!state) {
+    throw new Error(`No state matched \`${stateId}\`.`);
+  }
+
+  const baseRef = stateDisplayBranch(state);
+  const lane = ensureLane(repo, branch, branch, baseRef);
+  lane.branch = branch;
+  lane.baseRef = baseRef;
+  lane.currentStateId = state.id;
+  lane.updatedAt = nowIso();
+  repo.branchLaneMap[branch] = lane.name;
+  saveRepo(root, repo);
+  importIntoJj(root);
+  return lane;
+}
+
+export function createBranchAtState(root: string, branch: string, stateId: string): LaneRecord {
+  const repo = loadRepo(root);
+  const state = repo.states.find((candidate) => candidate.id === stateId);
+  if (!state) {
+    throw new Error(`No state matched \`${stateId}\`.`);
+  }
+  if (localBranchExists(root, branch)) {
+    throw new Error(`Branch \`${branch}\` already exists.`);
+  }
+
+  updateRef(root, `refs/heads/${branch}`, state.commit);
+  const lane = ensureLane(repo, branch, branch, stateDisplayBranch(state));
+  lane.branch = branch;
+  lane.baseRef = stateDisplayBranch(state);
+  lane.currentStateId = state.id;
+  lane.updatedAt = nowIso();
+  repo.branchLaneMap[branch] = lane.name;
+  saveRepo(root, repo);
+  importIntoJj(root);
   return lane;
 }
 

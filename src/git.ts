@@ -560,6 +560,41 @@ export function createOrSwitchBranch(
   run(["git", "switch", "-c", branch], { cwd });
 }
 
+export function localBranchExists(cwd: string, branch: string): boolean {
+  return run(
+    ["git", "show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
+    { cwd, allowFailure: true },
+  ).exitCode === 0;
+}
+
+export function switchBranch(cwd: string, branch: string): void {
+  run(["git", "switch", branch], { cwd });
+}
+
+export function addWorktree(
+  cwd: string,
+  path: string,
+  branch: string,
+  options?: {
+    createBranch?: boolean;
+    startPoint?: string;
+  },
+): void {
+  const args = ["git", "worktree", "add"];
+  if (options?.createBranch) {
+    args.push("-b", branch);
+  }
+  args.push(path);
+  if (options?.createBranch) {
+    if (options.startPoint) {
+      args.push(options.startPoint);
+    }
+  } else {
+    args.push(branch);
+  }
+  run(args, { cwd });
+}
+
 export function switchToDetachedCommit(
   cwd: string,
   commit: string,

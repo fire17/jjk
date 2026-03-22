@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import {
+  addWorktree,
   commandExists,
   createBundle,
   createOrSwitchBranch,
@@ -17,10 +18,12 @@ import {
   hasRemote,
   importIntoJj,
   isJjRepo,
+  localBranchExists,
   pickStateChanges,
   pullFastForward,
   pruneJjKeepRefs,
   pushCurrentBranchAndStateRefs,
+  switchBranch,
   switchToDetachedCommit,
   worktreeMatchesCommit,
 } from "./git";
@@ -40,7 +43,9 @@ import {
 } from "./render";
 import {
   createBackup,
+  attachBranchToState,
   createLane,
+  createBranchAtState,
   deleteState,
   eraseState,
   ensureWorkspaceSnapshot,
@@ -129,6 +134,10 @@ States:
   jjk up
   jjk down
   jjk update <branch> [state]
+  jjk branch [name]
+  jjk checkout <branch>
+  jjk fork <name> [--worktree]
+  jjk worktree [state]
 
 Flow:
   jjk lane
@@ -179,6 +188,11 @@ Examples:
     jjk pick fast_purple
     jjk nice fast_orange
     jjk update jjk/purple purple
+    jjk branch review_lane
+    jjk fork review_slice
+    jjk fork --worktree
+    jjk worktree purple
+    jjk checkout jjk/purple
 `);
 }
 
@@ -250,6 +264,139 @@ function formatFileSize(bytes: number): string {
     return `${(bytes / 1024).toFixed(1)} KB`;
   }
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function tryResolveState(root: string, query: string): StateRecord | null {
+  const trimmed = query.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  try {
+    return resolveState(root, trimmed);
+  } catch {
+    return null;
+  }
+}
+
+function uniqueBranchName(root: string, preferred: string): string {
+  let candidate = preferred;
+  let suffix = 2;
+  while (localBranchExists(root, candidate)) {
+    candidate = `${preferred}_${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
+}
+
+function uniqueWorktreePath(root: string, branch: string): string {
+  const parent = dirname(root);
+  const repoName = basename(root);
+  const base = `${repoName}-${branchSegment(branch)}`;
+  let candidate = join(parent, base);
+  let suffix = 2;
+  while (existsSync(candidate)) {
+    candidate = join(parent, `${base}-${suffix}`);
+    suffix += 1;
+  }
+  return candidate;
+}
+
+function ensureWorktreeSharesJjkStore(root: string, worktreePath: string): void {
+  const worktreeStorePath = join(worktreePath, JJK_DIR);
+  if (existsSync(worktreeStorePath)) {
+    return;
+  }
+  symlinkSync(resolve(root, JJK_DIR), worktreeStorePath, "dir");
+}
+
+function createBranchWorktree(
+  root: string,
+  state: StateRecord,
+  preferredBranch: string,
+): {
+  branch: string;
+  path: string;
+  state: StateRecord;
+} {
+  const branch = uniqueBranchName(root, preferredBranch);
+  const path = uniqueWorktreePath(root, branch);
+  addWorktree(root, path, branch, {
+    createBranch: true,
+    startPoint: state.commit,
+  });
+  ensureWorktreeSharesJjkStore(root, path);
+  attachBranchToState(root, branch, state.id);
+  return { branch, path, state };
+}
+
+function createStateWorktree(
+  root: string,
+  state: StateRecord,
+  kind: "fork" | "worktree",
+): {
+  branch: string;
+  path: string;
+  state: StateRecord;
+} {
+  const suffix = kind === "fork" ? "fork" : "worktree";
+  return createBranchWorktree(root, state, continuationBranchName(`${state.label}_${suffix}`));
+}
+
+function printWorktreeReady(root: string, input: {
+  branch: string;
+  path: string;
+  state: StateRecord;
+}): void {
+  console.log(`worktree ready: ${formatRelativePath(root, input.path)}`);
+  console.log(`branch: ${input.branch}`);
+  console.log(`state: ${shortStateId(input.state.id)} ${input.state.label}`);
+}
+
+function normalizeBranchName(input: string): string {
+  const trimmed = input.trim();
+  if (trimmed.length === 0) {
+    throw new Error("Provide a branch name.");
+  }
+  if (trimmed === "main" || trimmed.startsWith("jjk/")) {
+    return trimmed;
+  }
+  return continuationBranchName(trimmed);
+}
+
+function renderBranchList(root: string): string {
+  const repo = loadRepo(root);
+  const currentBranch = getCurrentBranchName(root);
+  const detachedHead = currentBranch === null ? getHeadCommit(root)?.slice(0, 8) ?? "unknown" : null;
+  const localBranches = Object.keys(fetchBranchRefsForDisplay(root, repo));
+  const visibleBranches = localBranches
+    .filter((branch) =>
+      branch === "main" ||
+      branch.startsWith("jjk/") ||
+      Boolean(repo.branchLaneMap[branch]),
+    )
+    .sort((left, right) => left.localeCompare(right));
+
+  const lines = visibleBranches.map((branch) => `${branch === currentBranch ? "*" : " "} ${branch}`);
+  if (detachedHead) {
+    lines.unshift(`* (detached at ${detachedHead})`);
+  }
+  return lines.join("\n");
+}
+
+function fetchBranchRefsForDisplay(root: string, repo: RepoData): Record<string, string> {
+  const refs = new Map<string, string>(Object.entries(repo.branchLaneMap).map(([branch]) => [branch, ""]));
+  for (const state of repo.states) {
+    refs.set(state.branch, "");
+    if (state.continuationBranch) {
+      refs.set(state.continuationBranch, "");
+    }
+  }
+  return Object.fromEntries(
+    Object.keys({ ...Object.fromEntries(refs) }).map((branch) => [
+      branch,
+      localBranchExists(root, branch) ? branch : "",
+    ]),
+  );
 }
 
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -793,6 +940,108 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       const enabled = updated.tags.includes(tag);
       console.log(`${enabled ? "enabled" : "disabled"} ${tag} on ${shortStateId(updated.id)} ${updated.label}`);
       console.log(renderStateSummary(updated));
+      return;
+    }
+    case "branch": {
+      const input = args.slice(1).join(" ").trim();
+      if (input.length === 0) {
+        console.log(renderBranchList(root));
+        return;
+      }
+
+      const currentState = resolveCurrentState(root, loadRepo(root).states) ?? resolveDefaultState(root);
+      const branch = normalizeBranchName(input);
+      createBranchAtState(root, branch, currentState.id);
+      recordWorkspaceSnapshot(root, `branch:${branch}`);
+      console.log(`created branch ${branch} at ${shortStateId(currentState.id)} ${currentState.label}`);
+      return;
+    }
+    case "checkout": {
+      const query = args.slice(1).join(" ").trim();
+      if (query.length === 0) {
+        throw new Error("Usage: jjk checkout <branch>");
+      }
+      const lane = resolveLane(root, query);
+      const branch = lane?.branch ?? query;
+      switchBranch(root, branch);
+      const currentState = resolveCurrentState(root, loadRepo(root).states);
+      syncCurrentStateHistory(root, currentState?.id ?? null);
+      recordWorkspaceSnapshot(root, `checkout:${branch}`);
+      console.log(`checked out ${branch}`);
+      return;
+    }
+    case "fork": {
+      const worktreeRequested = args.includes("--worktree");
+      const input = args
+        .slice(1)
+        .filter((arg) => arg !== "--worktree")
+        .join(" ")
+        .trim();
+
+      if (!worktreeRequested) {
+        if (input.length === 0) {
+          throw new Error("Usage: jjk fork <name> [--worktree]");
+        }
+        await handleSave(root, buildSaveRequest("new", input));
+        return;
+      }
+
+      if (input.length === 0) {
+        const created = createStateWorktree(root, resolveDefaultState(root), "fork");
+        recordWorkspaceSnapshot(root, `fork-worktree:${created.branch}`);
+        printWorktreeReady(root, created);
+        return;
+      }
+
+      const sourceState = tryResolveState(root, input);
+      if (sourceState) {
+        const created = createStateWorktree(root, sourceState, "fork");
+        recordWorkspaceSnapshot(root, `fork-worktree:${created.branch}`);
+        printWorktreeReady(root, created);
+        return;
+      }
+
+      const previousBranch = getCurrentBranchName(root);
+      const previousCommit = getHeadCommit(root);
+      const previousState = resolveCurrentState(root, loadRepo(root).states);
+      await handleSave(root, buildSaveRequest("new", input));
+      const forkState = resolveCurrentState(root, loadRepo(root).states);
+      if (!forkState) {
+        throw new Error("Unable to resolve the new fork state.");
+      }
+      const forkBranch = stateDisplayBranch(forkState);
+
+      if (previousBranch) {
+        createOrSwitchBranch(root, previousBranch, previousCommit ?? undefined, {
+          force: true,
+          reset: true,
+        });
+      } else if (previousCommit) {
+        switchToDetachedCommit(root, previousCommit, {
+          discardChanges: true,
+        });
+      }
+
+      syncCurrentStateHistory(root, previousState?.id ?? null);
+      const worktreePath = uniqueWorktreePath(root, forkBranch);
+      addWorktree(root, worktreePath, forkBranch);
+      ensureWorktreeSharesJjkStore(root, worktreePath);
+      recordWorkspaceSnapshot(root, `fork-worktree:${forkState.id}`);
+      console.log(`fork ready: ${forkBranch}`);
+      console.log(renderStateSummary(forkState));
+      printWorktreeReady(root, {
+        branch: forkBranch,
+        path: worktreePath,
+        state: forkState,
+      });
+      return;
+    }
+    case "worktree": {
+      const query = args.slice(1).join(" ").trim();
+      const sourceState = query.length > 0 ? resolveState(root, query) : resolveDefaultState(root);
+      const created = createStateWorktree(root, sourceState, "worktree");
+      recordWorkspaceSnapshot(root, `worktree:${created.branch}`);
+      printWorktreeReady(root, created);
       return;
     }
     case "stash": {
