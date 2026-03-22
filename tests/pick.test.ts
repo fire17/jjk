@@ -120,10 +120,11 @@ describe("pick flow", () => {
       console.log = originalLog;
     }
 
-    expect(output.join("\n")).toContain(`*^ ${shortStateId(picked!.id)} [cherry]`);
-    expect(output.join("\n")).toContain("cherry_purple");
-    expect(output.join("\n")).toContain(shortStateId(green.id));
-    expect(output.join("\n")).toContain(shortStateId(purple.id));
+    const rendered = output.join("\n");
+    expect(rendered).toMatch(new RegExp(`\\*\\^\\s+${shortStateId(picked!.id)} \\[cherry\\]`));
+    expect(rendered).toContain("cherry_purple");
+    expect(rendered).toContain(shortStateId(green.id));
+    expect(rendered).toContain(shortStateId(purple.id));
     expect(picked?.label).toBe("cherry_purple");
     expect(picked?.metadata?.base).toBe(green.id);
     expect(picked?.metadata?.cherry).toBe(purple.id);

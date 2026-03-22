@@ -6,13 +6,137 @@
 
 It gives humans and agents a higher-level workflow on top of Git and Jujutsu: save meaningful states, branch without fear, return to good places fast, and keep a readable trail of experiments instead of a pile of fragile commits.
 
-## What Exists In This Repo
+## Current Image
 
-- A Bun/TypeScript CLI with safe-space setup, state saves, graph rendering, fuzzy return, current-state navigation history, watch mode, lane creation, story view, freeze bundles, doctor checks, push/pull helpers, and experimental timeshift records.
-- A product layer with a README, operating docs, a product site, a Hacker News launch post, and a Codex skill bundle.
-- A storage model in `.jjk/` that tracks states and lanes without forcing normal Git branches to become the primary UX.
+![jjk current image](cover.png)
 
-## Quick Start
+## Bombastic JJK Header And Hook
+
+Stop thinking in fragile commits and start thinking in safe, named states. `jjk` gives you a practical working memory for software development: save where you are, fork without fear, return to a known-good place, inspect the real story of the work, and let both humans and agents move fast without losing context.
+
+`jjk` is better than plain Git when the real problem is not object storage but human workflow. Git is excellent at storing commits, refs, and diffs, but it pushes users toward branch anxiety, accidental history coupling, and low-signal commit spam. Jujutsu improves graph flexibility, but it is still fundamentally a version-control substrate, not a state-first UX for humans and agents. `jjk` sits above both: it gives named states, semantic commands, recovery workflows, branch-aware safe spaces, agent-friendly worktrees, and a more teachable mental model. You use `jjk` when you want “save this idea, branch here, return there, replay that change, show me the current story” to be the default way of working instead of raw commit surgery.
+
+## Best Example And Pain Points Solved
+
+Best example:
+
+```bash
+jjk init
+jjk save "main baseline before parser rewrite"
+jjk green
+jjk step "extract parser state machine"
+jjk step "wire parser into CLI path"
+jjk nice "green tests after parser integration"
+jjk return "main baseline"
+jjk orange
+jjk pick green
+jjk save "try parser with alternate config flow"
+jjk see
+```
+
+What this solves:
+
+- “I’m afraid to branch because I’ll make a mess.”
+  `jjk` makes branching and returning part of the normal flow.
+- “My commit history is full of low-signal checkpoints.”
+  `jjk step`, `save`, `nice`, and markers let you separate working memory from polished Git history.
+- “I can’t remember where the good state was.”
+  `jjk see`, `graph`, `search`, `inspect`, and `return` make recovery first-class.
+- “Agents and humans step on each other in the same checkout.”
+  `jjk fork <agent> --worktree` gives parallel isolated workspaces.
+- “Cherry-picking the right delta is annoying.”
+  `jjk pick`, `replay`, `merge-state`, and `revert-state` work in saved-state terms.
+- “Git and Jujutsu know the storage graph, but not the meaning of my work.”
+  `jjk` stores the meaning layer: labels, descriptions, messages, notes, markers, branch intent, and state relationships.
+
+Cool features:
+
+- branch-aware state graph with `jjk see` and `jjk graph`
+- semantic state kinds like `step`, `save`, `nice`, `cherry`, `stash`, and `git`
+- true Git-compatible commits under the hood
+- agent-friendly worktree creation
+- snapshot-based undo / redo / backup / restore
+- state metadata like notes, stars, pins, statuses, handoff notes, and aliases
+
+## Give Your Agent This Prompt
+
+Use this when you want another agent to install `jjk`, install the `jjk` skill, and then actively use it while working:
+
+```text
+Use the jjk workflow for this project.
+
+1. Install jjk if it is missing.
+   Preferred:
+   - `brew install fire17/homebrew-jjk/jjk`
+   Fallback:
+   - `bun add -g @fire17/jjk`
+
+2. If working from source, set it up from the repository:
+   - `bun install`
+   - `chmod +x ./bin/jjk`
+   - use `./bin/jjk` as the local launcher
+
+3. Install or refresh the jjk Codex skill from `skills/jjk/SKILL.md` so you can explain and operate jjk accurately.
+
+4. Use jjk in agentic mode for this task:
+   - `jjk init` if needed
+   - if parallel work is needed, use `jjk fork <agent-name> --worktree`
+   - after each meaningful feature chunk, run `jjk step "<extensive factual message>"`
+   - when a coherent milestone is reached, run `jjk save "<clear milestone message>"`
+   - if a clearly good state is reached, use `jjk nice "<clear good-state message>"`
+
+5. Teach me what you are doing as you go:
+   - explain jjk at a high level
+   - explain the exact commands you are using
+   - if I ask how something works internally, ground the answer in the current source code and tests
+
+6. Before finishing, tell me:
+   - what jjk states you created
+   - which branch/worktree you used
+   - how to return to the best state if I want to continue later
+```
+
+## Easy Install From Bun Or Homebrew
+
+### Homebrew
+
+```bash
+brew install fire17/homebrew-jjk/jjk
+```
+
+### Bun
+
+```bash
+bun add -g @fire17/jjk
+```
+
+## Install From Source
+
+Requirements:
+
+- `git` is required
+- `jj` is optional, but recommended if you want Jujutsu integration
+- `bun` is required when running from source
+
+Source setup:
+
+```bash
+git clone <your-jjk-repo-url>
+cd jjk_v1
+bun install
+chmod +x ./bin/jjk
+./bin/jjk -v
+```
+
+Local source usage:
+
+```bash
+./bin/jjk init
+./bin/jjk "safe baseline"
+./bin/jjk see
+```
+
+Or during development:
 
 ```bash
 bun run src/cli.ts init
@@ -22,14 +146,79 @@ bun run src/cli.ts nice "green tests after cleanup"
 bun run src/cli.ts see
 ```
 
-If you want the local launcher:
+## How To Use: Basic To Advanced
+
+### Basic
+
+Start a safe space and save meaningful points:
 
 ```bash
-chmod +x ./bin/jjk
-./bin/jjk -v
-./bin/jjk init
-./bin/jjk "safe baseline"
+jjk init
+jjk save "main baseline"
+jjk step "extract parser service"
+jjk nice "green tests after cleanup"
+jjk see
 ```
+
+### Branching And Return
+
+Create a line of work, go back, and create a sibling line:
+
+```bash
+jjk green
+jjk return main
+jjk orange
+jjk see
+```
+
+### Replay And Merge
+
+Take the changes from one state and apply them into another branch:
+
+```bash
+jjk return orange
+jjk pick fast_purple
+jjk save "orange with fast purple delta"
+```
+
+### Agentic Parallel Work
+
+Give each agent a separate worktree:
+
+```bash
+jjk fork parser_agent --worktree
+jjk fork ui_agent --worktree
+```
+
+Then inside each worktree:
+
+```bash
+jjk step "implement parser validation and add focused tests"
+jjk save "parser feature milestone"
+```
+
+## User Stories
+
+- “I want to try a risky refactor without losing the good version.”
+  Use `jjk save`, do the refactor, and `jjk return` if it goes wrong.
+
+- “I want two ideas in parallel without branch chaos.”
+  Use `jjk fork <name> --worktree` for isolated worktrees.
+
+- “I want to remember the good point after tests went green.”
+  Use `jjk nice "green tests after config cleanup"`.
+
+- “I want agents to work safely and leave a readable trail.”
+  Ask them to use `jjk step` after each meaningful feature chunk and `jjk save` at milestones.
+
+- “I forgot what changed on this branch.”
+  Use `jjk graph`, `jjk inspect`, `jjk files`, `jjk touched`, and `jjk snapshot-log`.
+
+## What Exists In This Repo
+
+- A Bun/TypeScript CLI with safe-space setup, state saves, graph rendering, fuzzy return, current-state navigation history, watch mode, lane creation, story view, freeze bundles, doctor checks, push/pull helpers, and experimental timeshift records.
+- A product layer with a README, operating docs, a product site, a Hacker News launch post, and a Codex skill bundle.
+- A storage model in `.jjk/` that tracks states and lanes without forcing normal Git branches to become the primary UX.
 
 ## Command Model
 
