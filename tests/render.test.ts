@@ -700,4 +700,112 @@ describe("renderGraph", () => {
     expect(lines[2]?.indexOf("Mar 22, 2026")).toBeGreaterThan(lines[2]?.indexOf("src22222") ?? -1);
     expect(lines[1]?.indexOf("Mar 22, 2026")).toBe(lines[2]?.indexOf("Mar 22, 2026"));
   });
+
+  test("trims long multiline label and message text in jjk see", () => {
+    const repo: RepoData = {
+      version: 1,
+      safeSpaceId: "safe1234",
+      createdAt: "2026-03-22T00:00:00.000Z",
+      updatedAt: "2026-03-22T00:00:00.000Z",
+      settings: {
+        watchDebounceMs: 1200,
+        autoStatePrefix: "auto",
+      },
+      states: [
+        {
+          id: "longmsg1",
+          kind: "save",
+          label: "a_state_with_a_pretty_long_label_name_already",
+          description: "long label",
+          createdAt: "2026-03-22T00:00:00.000Z",
+          branch: "jjk/green",
+          continuationBranch: "jjk/green",
+          lane: "jjk/green",
+          commit: "aaaaaaaa1234",
+          parentCommit: null,
+          parentStateId: null,
+          tags: [],
+          stats: { changedFiles: 1 },
+          metadata: {
+            gitCommit: "aaaaaaaa1234",
+            message: "first line of a very long message\nsecond line keeps going and going until it should definitely be trimmed in the table output",
+          },
+        },
+      ],
+      lanes: {
+        green: {
+          name: "green",
+          branch: "jjk/green",
+          baseRef: "main",
+          createdAt: "2026-03-22T00:00:00.000Z",
+          updatedAt: "2026-03-22T00:00:00.000Z",
+          currentStateId: "longmsg1",
+        },
+      },
+      branchLaneMap: {
+        "jjk/green": "green",
+      },
+      timeshifts: [],
+      freezes: [],
+    };
+
+    const table = renderStateTable(repo.states, { repo });
+    expect(table).toContain("a_state_with_a_pretty_long_label_name_already | first line of a very");
+    expect(table).toContain("...");
+    expect(table).not.toContain("\nsecond line keeps going");
+  });
+
+  test("trims long multiline messages in the jjk see graph", () => {
+    const repo: RepoData = {
+      version: 1,
+      safeSpaceId: "safe1234",
+      createdAt: "2026-03-22T00:00:00.000Z",
+      updatedAt: "2026-03-22T00:00:00.000Z",
+      settings: {
+        watchDebounceMs: 1200,
+        autoStatePrefix: "auto",
+      },
+      states: [
+        {
+          id: "graphmsg",
+          kind: "save",
+          label: "green",
+          description: "green",
+          createdAt: "2026-03-22T00:00:00.000Z",
+          branch: "main",
+          continuationBranch: null,
+          lane: "main",
+          commit: "aaaaaaaa1234",
+          parentCommit: null,
+          parentStateId: null,
+          tags: [],
+          stats: { changedFiles: 1 },
+          metadata: {
+            gitCommit: "aaaaaaaa1234",
+            message: "first line of a very long graph message\nsecond line should never break the tree rendering and should be trimmed with an ellipsis",
+          },
+        },
+      ],
+      lanes: {
+        main: {
+          name: "main",
+          branch: "main",
+          baseRef: "main",
+          createdAt: "2026-03-22T00:00:00.000Z",
+          updatedAt: "2026-03-22T00:00:00.000Z",
+          currentStateId: "graphmsg",
+        },
+      },
+      branchLaneMap: {
+        main: "main",
+      },
+      timeshifts: [],
+      freezes: [],
+    };
+
+    const graph = renderGraph(repo, { currentStateId: "graphmsg" });
+    expect(graph).toContain("first line of a very long graph message");
+    expect(graph).toContain("...");
+    expect(graph).not.toContain("\nsecond line should never break");
+  });
 });

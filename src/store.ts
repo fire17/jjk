@@ -8,6 +8,8 @@ import {
   ensureLocalExcludes,
   getCurrentBranch,
   getCurrentBranchName,
+  hasHead,
+  listGitCommitsForImport,
   getLocalBranchRefs,
   getHeadCommit,
   hasDirtyWorktree,
@@ -207,7 +209,7 @@ function normalizeCurrentStateHistory(
   };
 }
 
-export function loadRepo(root: string): RepoData {
+function loadRepoExact(root: string): RepoData {
   const repo = JSON.parse(readFileSync(repoFilePath(root), "utf8")) as RepoData;
   const states = repo.states.map((state) => normalizeStateRecord(state));
   return {
@@ -217,10 +219,223 @@ export function loadRepo(root: string): RepoData {
   };
 }
 
+function ensureCurrentStateHistoryEndsWith(
+  repo: RepoData,
+  stateId: string | null,
+): boolean {
+  if (!stateId) {
+    return false;
+  }
+
+  const history = repo.currentStateHistory ?? { entries: [], index: -1 };
+  const activeStateId =
+    history.index >= 0 && history.index < history.entries.length
+      ? history.entries[history.index] ?? null
+      : null;
+
+  if (activeStateId === stateId) {
+    repo.currentStateHistory = history;
+    return false;
+  }
+
+  history.entries = history.entries.slice(0, history.index + 1);
+  history.entries.push(stateId);
+  history.index = history.entries.length - 1;
+  repo.currentStateHistory = history;
+  return true;
+}
+
+function reconcileRepoWithGit(root: string, repo: RepoData): RepoData {
+  if (!isGitRepo(root) || !hasHead(root)) {
+    return repo;
+  }
+
+  const commits = listGitCommitsForImport(root);
+  if (commits.length === 0) {
+    return repo;
+  }
+
+  const branchRefs = getLocalBranchRefs(root);
+  const fallbackBranch = getCurrentBranchName(root) ?? Object.keys(branchRefs)[0] ?? "main";
+  if (Object.keys(branchRefs).length === 0) {
+    branchRefs[fallbackBranch] = getHeadCommit(root) ?? commits[commits.length - 1]!.hash;
+  }
+
+  const assignments = assignImportedBranches({
+    commits: commits.map((commit) => ({ hash: commit.hash, parents: commit.parents })),
+    branchRefs,
+  });
+  const stateIdByCommit = new Map<string, string>();
+  const knownCommits = new Set<string>();
+
+  for (const state of repo.states) {
+    const commit = stateGitCommit(state);
+    knownCommits.add(commit);
+    stateIdByCommit.set(commit, state.id);
+  }
+
+  let changed = false;
+
+  for (const commit of commits) {
+    if (knownCommits.has(commit.hash)) {
+      continue;
+    }
+
+    const branch = assignments.get(commit.hash) ?? fallbackBranch;
+    const lane = ensureLane(repo, branch, branch, branch);
+    const subject = commit.subject.trim();
+    const label = subject.length > 0 ? defaultLabel("save", subject) : commit.hash.slice(0, 12);
+    const description = subject.length > 0 ? subject : commit.hash.slice(0, 12);
+    const state: StateRecord = {
+      id: shortId(),
+      kind: "save",
+      label,
+      description,
+      createdAt: commit.committedAt || nowIso(),
+      branch,
+      lane: lane.name,
+      continuationBranch: branch === "main" ? null : branch,
+      commit: commit.hash,
+      parentCommit: commit.parents[0] ?? null,
+      parentStateId: commit.parents[0] ? stateIdByCommit.get(commit.parents[0]) ?? null : null,
+      tags: [],
+      stats: {
+        changedFiles: 0,
+      },
+      metadata: {
+        gitCommit: commit.hash,
+        ...(commit.body.length > 0 ? { message: commit.body } : {}),
+      },
+    };
+    repo.states.push(state);
+    knownCommits.add(commit.hash);
+    stateIdByCommit.set(commit.hash, state.id);
+    updateRef(root, `refs/jjk/states/${state.id}`, commit.hash);
+    changed = true;
+  }
+
+  for (const [branch, tip] of Object.entries(branchRefs)) {
+    const laneName = repo.branchLaneMap[branch];
+    const lane = laneName ? repo.lanes[laneName] : ensureLane(repo, branch, branch, branch);
+    const state = findMostRecentStateForCommit(repo, tip, branch) ?? findMostRecentStateForCommit(repo, tip);
+    const currentLaneState = lane.currentStateId
+      ? repo.states.find((candidate) => candidate.id === lane.currentStateId) ?? null
+      : null;
+    const shouldRefreshLaneCurrent =
+      !currentLaneState ||
+      isDeletedState(currentLaneState) ||
+      stateDisplayBranch(currentLaneState) === branch;
+    if (shouldRefreshLaneCurrent && lane.currentStateId !== (state?.id ?? null)) {
+      lane.currentStateId = state?.id ?? null;
+      lane.updatedAt = nowIso();
+      changed = true;
+    }
+  }
+
+  const headCommit = getHeadCommit(root);
+  const headBranch = getCurrentBranchName(root);
+  const currentState = headCommit
+    ? findMostRecentStateForCommit(repo, headCommit, headBranch) ?? findMostRecentStateForCommit(repo, headCommit)
+    : null;
+  if (ensureCurrentStateHistoryEndsWith(repo, currentState?.id ?? null)) {
+    changed = true;
+  }
+
+  repo.currentStateHistory = normalizeCurrentStateHistory(repo.currentStateHistory, repo.states);
+
+  if (changed) {
+    saveRepo(root, repo);
+    importIntoJj(root);
+  }
+
+  return repo;
+}
+
+export function loadRepo(root: string): RepoData {
+  return reconcileRepoWithGit(root, loadRepoExact(root));
+}
+
 export function saveRepo(root: string, repo: RepoData): void {
   repo.updatedAt = nowIso();
   const path = repoFilePath(root);
   Bun.write(path, `${JSON.stringify(repo, null, 2)}\n`);
+}
+
+function branchPriority(branch: string): number {
+  const normalized = branch.toLowerCase();
+  if (normalized === "main" || normalized === "master" || normalized === "trunk") {
+    return 0;
+  }
+  return 10;
+}
+
+function assignImportedBranches(input: {
+  commits: Array<{ hash: string; parents: string[] }>;
+  branchRefs: Record<string, string>;
+}): Map<string, string> {
+  const parentMap = new Map(input.commits.map((commit) => [commit.hash, commit.parents] as const));
+  const distances = new Map<string, Map<string, number>>();
+  const orderedBranches = Object.keys(input.branchRefs).sort((left, right) => {
+    const priority = branchPriority(left) - branchPriority(right);
+    if (priority !== 0) {
+      return priority;
+    }
+    return left.localeCompare(right);
+  });
+
+  for (const branch of orderedBranches) {
+    const tip = input.branchRefs[branch];
+    if (!tip) {
+      continue;
+    }
+    const queue: Array<{ commit: string; distance: number }> = [{ commit: tip, distance: 0 }];
+    const seen = new Set<string>();
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (seen.has(current.commit)) {
+        continue;
+      }
+      seen.add(current.commit);
+      if (!distances.has(current.commit)) {
+        distances.set(current.commit, new Map());
+      }
+      const perBranch = distances.get(current.commit)!;
+      const previous = perBranch.get(branch);
+      if (previous === undefined || current.distance < previous) {
+        perBranch.set(branch, current.distance);
+      }
+      for (const parent of parentMap.get(current.commit) ?? []) {
+        queue.push({ commit: parent, distance: current.distance + 1 });
+      }
+    }
+  }
+
+  const assignments = new Map<string, string>();
+  for (const commit of input.commits) {
+    const reachable = distances.get(commit.hash);
+    const choices = reachable
+      ? Array.from(reachable.entries()).sort((left, right) => {
+          if (left[1] !== right[1]) {
+            return left[1] - right[1];
+          }
+          const priority = branchPriority(left[0]) - branchPriority(right[0]);
+          if (priority !== 0) {
+            return priority;
+          }
+          return left[0].localeCompare(right[0]);
+        })
+      : [];
+    assignments.set(commit.hash, choices[0]?.[0] ?? orderedBranches[0] ?? "main");
+  }
+
+  return assignments;
+}
+
+function importExistingGitHistory(root: string, repo: RepoData): RepoData {
+  const imported = reconcileRepoWithGit(root, repo);
+  imported.allowMainBranchSave = false;
+  imported.returnContext = null;
+  return imported;
 }
 
 export function initSafeSpace(startCwd: string): { root: string; repo: RepoData } {
@@ -262,24 +477,29 @@ export function initSafeSpace(startCwd: string): { root: string; repo: RepoData 
       freezes: [],
     };
 
-    ensureLane(repo, branch, branch, branch);
-    saveRepo(root, repo);
+    if (isGitRepo(root) && hasHead(root)) {
+      const imported = importExistingGitHistory(root, repo);
+      saveRepo(root, imported);
+    } else {
+      ensureLane(repo, branch, branch, branch);
+      saveRepo(root, repo);
 
-    const initial = saveState(root, {
-      kind: "save",
-      description: branch,
-    }, {
-      forceCurrentBranch: branch,
-      allowMainBranchSave: true,
-      continuationBranch: null,
-    });
-    const seeded = initial.repo;
-    seeded.allowMainBranchSave = false;
-    seeded.currentStateHistory = {
-      entries: [initial.state.id],
-      index: 0,
-    };
-    saveRepo(root, seeded);
+      const initial = saveState(root, {
+        kind: "save",
+        description: branch,
+      }, {
+        forceCurrentBranch: branch,
+        allowMainBranchSave: true,
+        continuationBranch: null,
+      });
+      const seeded = initial.repo;
+      seeded.allowMainBranchSave = false;
+      seeded.currentStateHistory = {
+        entries: [initial.state.id],
+        index: 0,
+      };
+      saveRepo(root, seeded);
+    }
   }
 
   const loaded = loadRepo(root);

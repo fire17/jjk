@@ -20,6 +20,14 @@ interface CommitNode {
   subject: string;
 }
 
+export interface ImportedGitCommit {
+  hash: string;
+  parents: string[];
+  committedAt: string;
+  subject: string;
+  body: string;
+}
+
 export interface WorktreeStatus {
   dirty: boolean;
   changedFiles: number;
@@ -212,6 +220,29 @@ function loadCommitGraph(cwd: string): Map<string, CommitNode> {
   }
 
   return nodes;
+}
+
+export function listGitCommitsForImport(cwd: string): ImportedGitCommit[] {
+  const stdout = run(
+    ["git", "log", "--all", "--reverse", "--date-order", "--format=%H%x1f%P%x1f%cI%x1f%s%x1f%b%x1e"],
+    { cwd, allowFailure: true },
+  ).stdout;
+
+  return stdout
+    .split("\x1e")
+    .map((record) => record.trim())
+    .filter(Boolean)
+    .map((record) => {
+      const [hash = "", parentsRaw = "", committedAt = "", subject = "", body = ""] = record.split("\x1f");
+      return {
+        hash,
+        parents: parentsRaw.split(" ").filter(Boolean),
+        committedAt,
+        subject: subject.trim(),
+        body: body.trim(),
+      };
+    })
+    .filter((commit) => commit.hash.length > 0);
 }
 
 function buildJjSnapshotMessage(commit: string, graph: Map<string, CommitNode>): string {

@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "index": 0,
+  "entries": [
+    {
+      "id": "af0f6f09",
+      "createdAt": "2026-03-22T10:02:42.489Z",
+      "reason": "init",
+      "repo": {
+        "version": 1,
+        "safeSpaceId": "e333e1cb",
+        "createdAt": "2026-03-22T10:02:42.316Z",
+        "updatedAt": "2026-03-22T10:02:42.489Z",
+        "settings": {
+          "watchDebounceMs": 1200,
+          "autoStatePrefix": "auto",
+          "showWorkspaceSnapshotsInGit": false
+        },
+        "states": [
+          {
+            "id": "f2f2274a",
+            "kind": "save",
+            "label": "main",
+            "description": "main",
+            "createdAt": "2026-03-22T10:02:42.387Z",
+            "branch": "main",
+            "lane": "main",
+            "continuationBranch": null,
+            "commit": "40eac6a7b3ea2f2d7eb288fa47369e24ea3ff90f",
+            "parentCommit": "c38301834568f7cde07121d4e24ea35c05f5f686",
+            "parentStateId": null,
+            "tags": [],
+            "stats": {
+              "changedFiles": 0
+            },
+            "metadata": {
+              "gitCommit": "40eac6a7b3ea2f2d7eb288fa47369e24ea3ff90f"
+            }
+          }
+        ],
+        "lanes": {
+          "main": {
+            "name": "main",
+            "branch": "main",
+            "baseRef": "main",
+            "createdAt": "2026-03-22T10:02:42.317Z",
+            "updatedAt": "2026-03-22T10:02:42.387Z",
+            "currentStateId": "f2f2274a"
+          }
+        },
+        "branchLaneMap": {
+          "main": "main"
+        },
+        "allowMainBranchSave": false,
+        "returnContext": null,
+        "currentStateHistory": {
+          "entries": [
+            "f2f2274a"
+          ],
+          "index": 0
+        },
+        "timeshifts": [],
+        "freezes": []
+      },
+      "git": {
+        "currentBranch": "main",
+        "headCommit": "40eac6a7b3ea2f2d7eb288fa47369e24ea3ff90f",
+        "branches": {
+          "main": "40eac6a7b3ea2f2d7eb288fa47369e24ea3ff90f"
+        }
+      }
+    }
+  ]
+}

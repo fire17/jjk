@@ -13,6 +13,8 @@ import {
 } from "./utils";
 
 const ANSI_RESET = "\u001b[0m";
+const STATE_GRAPH_LABEL_MESSAGE_MAX_LENGTH = 120;
+const STATE_TABLE_LABEL_MESSAGE_MAX_LENGTH = 72;
 const BRANCH_COLOR_PALETTE = [
   31, 32, 33, 37, 38, 39, 43, 44, 45, 68,
   69, 74, 75, 80, 81, 104, 105, 110, 111, 136,
@@ -49,6 +51,31 @@ export function renderStateSummaryWithOptions(
 function appendStateMessage(text: string, state: StateRecord): string {
   const message = stateMessage(state);
   return message ? `${text} | ${message}` : text;
+}
+
+function singleLine(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function formatStateTableLabelMessage(state: StateRecord): string {
+  return truncate(
+    singleLine(appendStateMessage(stateLabelWithMarkers(state), state)),
+    STATE_TABLE_LABEL_MESSAGE_MAX_LENGTH,
+  );
+}
+
+function formatStateGraphLine(text: string, state: StateRecord): string {
+  const message = stateMessage(state);
+  if (!message) {
+    return text;
+  }
+
+  const separator = " | ";
+  const maxMessageLength = Math.max(
+    3,
+    STATE_GRAPH_LABEL_MESSAGE_MAX_LENGTH - text.length - separator.length,
+  );
+  return `${text}${separator}${truncate(singleLine(message), maxMessageLength)}`;
 }
 
 function stateLabelWithMarkers(state: StateRecord): string {
@@ -156,7 +183,7 @@ export function renderGraph(
       const isCurrent = state.id === options?.currentStateId;
       const isLeaf = leafStateIds.has(state.id);
       const leafMarker = isLeaf ? "^" : " ";
-      const line = appendStateMessage(
+      const line = formatStateGraphLine(
         `${prefix}${connector} ${currentMarker}${leafMarker} ${shortStateId(state.id)} [${state.kind}] ${stateLabelWithMarkers(state)} (${stateDisplayBranch(state)})`,
         state,
       );
@@ -211,7 +238,7 @@ export function renderStateTable(
   );
   const labelWidth = Math.max(
     "label | message".length,
-    ...visibleStates.map((state) => appendStateMessage(stateLabelWithMarkers(state), state).length),
+    ...visibleStates.map((state) => formatStateTableLabelMessage(state).length),
   );
   const dateWidth = Math.max(
     8,
@@ -230,7 +257,7 @@ export function renderStateTable(
   const leafStateIds = resolveBranchLeafStateIds(visibleStates, options?.repo);
 
   for (const state of visibleStates) {
-    const labelText = appendStateMessage(stateLabelWithMarkers(state), state);
+    const labelText = formatStateTableLabelMessage(state);
     const lineWithLinks = `${pad(shortStateId(state.id), idWidth)}${separator}${pad(shortCommit(stateGitCommit(state), 8), gitWidth)}${separator}${pad(state.kind, kindWidth)}${separator}${pad(state.lane, laneWidth)}${separator}${pad(stateDisplayBranch(state), branchWidth)}${separator}${pad(labelText, labelWidth)}${separator}${pad(shortLinkedStateId(state.metadata?.base), baseWidth)}${separator}${pad(shortLinkedStateId(state.metadata?.cherry), cherryWidth)}${separator}${pad(formatDate(state.createdAt), dateWidth)}`;
     lines.push(
       colorizeBranchLine(
