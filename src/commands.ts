@@ -112,6 +112,7 @@ States:
   jjk show [state]
   jjk story
   jjk diff [--atomic] [state] [state]
+  jjk git log
   jjk delete <state>
   jjk recover <deleted-state>
   jjk undo [-rm] [-y]
@@ -165,6 +166,7 @@ Examples:
     jjk show purple
     jjk diff purple orange
     jjk diff --atomic purple fast_purple
+    jjk git log
 
   Recovery:
     jjk backup before_refactor
@@ -834,6 +836,20 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       const state = query.length > 0 ? resolveState(root, query) : resolveDefaultState(root);
       console.log(renderAtomicStateDiff(root, state));
       return;
+    }
+    case "git": {
+      const subcommand = (args[1] ?? "").trim().toLowerCase();
+      if (subcommand === "log") {
+        console.log(
+          runGitTextCommand(
+            root,
+            ["log", "--all", "--oneline", "--graph", "--decorate"],
+            "No git commits yet.",
+          ),
+        );
+        return;
+      }
+      throw new Error("Usage: jjk git log");
     }
     case "story":
       console.log(renderStory(listStates(root)));
