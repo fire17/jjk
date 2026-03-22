@@ -572,6 +572,34 @@ export function listRefs(cwd: string, prefix: string): string[] {
   return result.stdout.split("\n").filter(Boolean);
 }
 
+export function getLocalBranchRefs(cwd: string): Record<string, string> {
+  const result = run(
+    ["git", "for-each-ref", "--format=%(refname:short)%09%(objectname)", "refs/heads"],
+    { cwd, allowFailure: true },
+  );
+  if (result.exitCode !== 0 || result.stdout.length === 0) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    result.stdout
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => line.split("\t"))
+      .filter((parts) => parts[0] && parts[1])
+      .map((parts) => [parts[0]!, parts[1]!]),
+  );
+}
+
+export function deleteRef(cwd: string, refName: string): void {
+  run(["git", "update-ref", "-d", refName], { cwd, allowFailure: true });
+}
+
+export function deleteLocalBranch(cwd: string, branch: string): void {
+  run(["git", "branch", "-D", branch], { cwd, allowFailure: true });
+}
+
 export function hasRemote(cwd: string, name = "origin"): boolean {
   return run(["git", "remote", "get-url", name], {
     cwd,

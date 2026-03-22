@@ -38,16 +38,21 @@ import {
   renderTimeshifts,
 } from "./render";
 import {
+  createBackup,
   createLane,
   deleteState,
   eraseState,
+  ensureWorkspaceSnapshot,
   initSafeSpace,
   JJK_DIR,
   listLanes,
   listStates,
   listTimeshifts,
+  loadBackup,
   loadRepo,
   promoteState,
+  recordWorkspaceSnapshot,
+  redoWorkspaceSnapshot,
   recoverState,
   recordFreeze,
   rememberTimeshift,
@@ -61,6 +66,7 @@ import {
   isTipStateOnBranch,
   starState,
   stashWorkspace,
+  undoWorkspaceSnapshot,
   updateBranchTarget,
 } from "./store";
 import type { MapHit, RepoData, SaveStateRequest, StateRecord } from "./types";
@@ -102,8 +108,11 @@ States:
   jjk delete <state>
   jjk recover <deleted-state>
   jjk undo [-rm] [-y]
+  jjk redo
   jjk pick <state>
   jjk promote <state> <nice|star>
+  jjk backup [label]
+  jjk load <backupfile>
   jjk return <state>
   jjk lastest <branch>
   jjk return -
@@ -174,6 +183,7 @@ async function handleSave(
 
   const result = saveState(root, request, options);
   syncCurrentStateHistory(root, resolveCurrentState(root, loadRepo(root).states)?.id ?? null);
+  recordWorkspaceSnapshot(root, `${request.kind}:${request.label ?? request.description}`);
   console.log(renderStateSummary(result.state));
 }
 
@@ -186,6 +196,16 @@ function buildSaveRequest(kind: SaveStateRequest["kind"], input: string): SaveSt
 
 function shouldColorizeOutput(): boolean {
   return Boolean(process.stdout.isTTY) && process.env.NO_COLOR === undefined;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -630,15 +650,6 @@ function resolveUndoFallbackState(root: string, stateId: string): StateRecord | 
     .find((state) => state.id !== stateId && !isDeletedState(state)) ?? null;
 }
 
-function syncBranchAfterUndo(root: string, state: StateRecord): StateRecord {
-  const branchQuery = stateDisplayBranch(state);
-  const latestState = resolveLatestStateForBranch(root, branchQuery);
-  const updated = updateBranchTarget(root, branchQuery, latestState.id);
-  const currentStateId = updated.state?.id ?? latestState.id;
-  syncCurrentStateHistory(root, currentStateId);
-  return updated.state ?? latestState;
-}
-
 export async function runCli(argv: string[], cwd: string): Promise<void> {
   const args = argv.slice();
 
@@ -672,6 +683,7 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
   }
 
   const root = requireSafeSpace(cwd);
+  ensureWorkspaceSnapshot(root, "current");
 
   switch (command) {
     case "save":
@@ -694,6 +706,7 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
         try {
           const target = resolveState(root, input);
           const starred = starState(root, target.id);
+          recordWorkspaceSnapshot(root, `star:${starred.id}`);
           console.log(`starred ${shortStateId(starred.id)} ${starred.label}`);
           console.log(renderStateSummary(starred));
           return;
@@ -709,6 +722,7 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
     case "stash": {
       const parsed = parseStateLabelAndMessage(args.slice(1).join(" "));
       const stashed = stashWorkspace(root, parsed);
+      recordWorkspaceSnapshot(root, `stash:${stashed.state.id}`);
       console.log(`stashed changes into ${stateDisplayBranch(stashed.state)}`);
       console.log(renderStateSummary(stashed.state));
       return;
@@ -805,9 +819,11 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       const state = resolveState(root, query);
       const fallback = currentState?.id === state.id ? resolveUndoFallbackState(root, state.id) : null;
       const deleted = deleteState(root, state.id);
+      recordWorkspaceSnapshot(root, `delete:${deleted.id}`);
       console.log(`deleted ${shortStateId(deleted.id)} to ${deleted.metadata?.deletedBranch}`);
       if (fallback) {
         console.log(activateState(root, fallback, "returned"));
+        recordWorkspaceSnapshot(root, `return:${fallback.id}`);
       }
       return;
     }
@@ -818,39 +834,29 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       }
       const state = resolveState(root, query, { includeDeleted: true });
       const recovered = recoverState(root, state.id);
+      recordWorkspaceSnapshot(root, `recover:${recovered.id}`);
       console.log(`recovered ${shortStateId(recovered.id)} to ${stateDisplayBranch(recovered)}`);
       console.log(renderStateSummary(recovered));
       return;
     }
     case "undo": {
-      const removeState = args.includes("-rm");
-      const skipConfirm = args.includes("-y");
+      const snapshot = undoWorkspaceSnapshot(root);
       const currentState = resolveCurrentState(root, loadRepo(root).states);
-      if (!currentState) {
-        throw new Error("No current state is available.");
+      if (currentState) {
+        console.log(`undid to ${shortStateId(currentState.id)} ${currentState.label}`);
+      } else {
+        console.log(`undid to snapshot ${snapshot.id}`);
       }
-
-      const fallback = resolveUndoFallbackState(root, currentState.id);
-      if (!fallback) {
-        throw new Error("No earlier state is available to return to after undo.");
+      return;
+    }
+    case "redo": {
+      const snapshot = redoWorkspaceSnapshot(root);
+      const currentState = resolveCurrentState(root, loadRepo(root).states);
+      if (currentState) {
+        console.log(`redid to ${shortStateId(currentState.id)} ${currentState.label}`);
+      } else {
+        console.log(`redid to snapshot ${snapshot.id}`);
       }
-
-      if (!removeState && currentState.stats.changedFiles > 0) {
-        const branchQuery = getCurrentBranchName(root) ?? stateDisplayBranch(currentState);
-        const updated = updateBranchTarget(root, branchQuery, fallback.id);
-        const synced = syncBranchAfterUndo(root, updated.state ?? fallback);
-        console.log(`undid to ${shortStateId(synced.id)} ${synced.label}`);
-        return;
-      }
-
-      if (!skipConfirm && currentState.stats.changedFiles > 0) {
-        await confirmAction(`Undo creation of ${shortStateId(currentState.id)} ${currentState.label}?`);
-      }
-
-      const erased = eraseState(root, currentState.id);
-      console.log(`erased ${shortStateId(erased.id)} ${erased.label}`);
-      console.log(activateState(root, fallback, "returned"));
-      syncBranchAfterUndo(root, fallback);
       return;
     }
     case "diff": {
@@ -945,6 +951,7 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       console.log(`picked ${state.id} onto ${getCurrentBranch(root)}`);
       console.log(renderStateSummary(picked.state));
       console.log(activation);
+      recordWorkspaceSnapshot(root, `pick:${picked.state.id}`);
       return;
     }
     case "promote": {
@@ -968,12 +975,14 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
         promotionInput.description,
         promotionInput.message,
       );
+      recordWorkspaceSnapshot(root, `promote:${promoted.id}`);
       console.log(`promoted ${shortStateId(state.id)} to ${targetKind}`);
       console.log(renderStateSummary(promoted));
       return;
     }
     case "return":
       await handleReturn(root, args.slice(1).join(" "));
+      recordWorkspaceSnapshot(root, `return:${resolveCurrentState(root, loadRepo(root).states)?.id ?? "unknown"}`);
       return;
     case "lastest":
     case "latest": {
@@ -993,6 +1002,7 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
             syncHistoryBeforeNavigate: false,
           }),
         );
+        recordWorkspaceSnapshot(root, `back:${target.state.id}`);
       }
       return;
     case "forward":
@@ -1004,6 +1014,7 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
             syncHistoryBeforeNavigate: false,
           }),
         );
+        recordWorkspaceSnapshot(root, `forward:${target.state.id}`);
       }
       return;
     case "up": {
@@ -1012,12 +1023,17 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       if (!currentState?.parentStateId) {
         throw new Error("No parent state is available.");
       }
-      console.log(activateState(root, resolveState(root, currentState.parentStateId), "up"));
+      const target = resolveState(root, currentState.parentStateId);
+      console.log(activateState(root, target, "up"));
+      recordWorkspaceSnapshot(root, `up:${target.id}`);
       return;
     }
-    case "down":
-      console.log(activateState(root, await resolveChildState(root), "down"));
+    case "down": {
+      const target = await resolveChildState(root);
+      console.log(activateState(root, target, "down"));
+      recordWorkspaceSnapshot(root, `down:${target.id}`);
       return;
+    }
     case "update": {
       const branchQuery = args[1] ?? "";
       const stateQuery = args.slice(2).join(" ").trim();
@@ -1034,6 +1050,7 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
         ? `${shortStateId(updated.state.id)} ${updated.state.label}`
         : updated.commit.slice(0, 8);
       syncCurrentStateHistory(root, resolveCurrentState(root, loadRepo(root).states)?.id ?? null);
+      recordWorkspaceSnapshot(root, `update:${updated.branch}`);
       console.log(`updated ${updated.branch} to ${targetLabel}`);
       return;
     }
@@ -1134,6 +1151,7 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       if (subcommand === "save") {
         const label = args.slice(2).join(" ").trim() || "timeshift";
         const record = rememberTimeshift(root, label);
+        recordWorkspaceSnapshot(root, `timeshift-save:${record.id}`);
         console.log(`timeshift saved: ${record.id} ${record.label}`);
         return;
       }
@@ -1153,6 +1171,7 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
             reset: true,
           });
           syncCurrentStateHistory(root, resolveCurrentState(root, loadRepo(root).states)?.id ?? null);
+          recordWorkspaceSnapshot(root, `timeshift-restore:${record.id}`);
           console.log(`timeshift restored to ${record.branch} at ${shortStateId(state.id)}`);
         } else {
           createOrSwitchBranch(root, record.branch, undefined, {
@@ -1160,6 +1179,7 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
             reset: true,
           });
           syncCurrentStateHistory(root, resolveCurrentState(root, loadRepo(root).states)?.id ?? null);
+          recordWorkspaceSnapshot(root, `timeshift-restore:${record.id}`);
           console.log(`timeshift restored to branch ${record.branch}`);
         }
         console.log(`saved cwd: ${record.relativeCwd}`);
@@ -1167,6 +1187,24 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       }
 
       console.log(renderTimeshifts(listTimeshifts(root)));
+      return;
+    }
+    case "backup": {
+      const label = args.slice(1).join(" ").trim();
+      const path = createBackup(root, label || undefined);
+      const size = statSync(path).size;
+      console.log(`backup saved: ${formatRelativePath(root, path)} (${formatFileSize(size)})`);
+      return;
+    }
+    case "load": {
+      const query = args.slice(1).join(" ").trim();
+      if (query.length === 0) {
+        throw new Error("Usage: jjk load <backupfile>");
+      }
+      recordWorkspaceSnapshot(root, `before-load:${query}`);
+      const loaded = loadBackup(root, query);
+      recordWorkspaceSnapshot(root, `load:${loaded.path}`);
+      console.log(`loaded backup: ${formatRelativePath(root, loaded.path)}`);
       return;
     }
     default:

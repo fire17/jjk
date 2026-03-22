@@ -90,7 +90,7 @@ describe("delete and undo commands", () => {
     expect((await captureCli(["current"], cwd))).toContain(green.label);
   });
 
-  test("undo without -rm rewinds to the previous state without erasing the saved state", async () => {
+  test("undo restores the previous full jjk and git snapshot and redo brings it back", async () => {
     const filePath = join(cwd, "notes.txt");
 
     Bun.write(filePath, "green\n");
@@ -103,16 +103,25 @@ describe("delete and undo commands", () => {
 
     await runCli(["undo"], cwd);
 
-    const repo = loadRepo(cwd);
-    expect(repo.states.find((state) => state.id === purple.id)).toBeDefined();
+    let repo = loadRepo(cwd);
+    expect(repo.states.find((state) => state.id === purple.id)).toBeUndefined();
     const lane = repo.lanes[repo.branchLaneMap["jjk/green"] ?? ""];
     expect(lane?.currentStateId).toBe(green.id);
     expect(run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], { cwd }).stdout).toBe("jjk/green");
     expect(run(["git", "rev-parse", "--verify", "HEAD"], { cwd }).stdout).toBe(green.commit);
     expect((await captureCli(["current"], cwd))).toContain(green.label);
+
+    await runCli(["redo"], cwd);
+
+    repo = loadRepo(cwd);
+    const restoredPurple = repo.states.find((state) => state.id === purple.id);
+    expect(restoredPurple).toBeDefined();
+    expect(run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], { cwd }).stdout).toBe("jjk/green");
+    expect(run(["git", "rev-parse", "--verify", "HEAD"], { cwd }).stdout).toBe(purple.commit);
+    expect((await captureCli(["current"], cwd))).toContain(purple.label);
   });
 
-  test("undo -rm erases a non-empty current state and -y skips confirmation", async () => {
+  test("undo -rm also restores the previous exact snapshot", async () => {
     const filePath = join(cwd, "notes.txt");
 
     Bun.write(filePath, "green\n");
@@ -122,8 +131,6 @@ describe("delete and undo commands", () => {
     Bun.write(filePath, "purple\n");
     await runCli(["save", "purple"], cwd);
     const purple = loadRepo(cwd).states.at(-1)!;
-
-    await expect(runCli(["undo", "-rm"], cwd)).rejects.toThrow("Confirmation required");
 
     await runCli(["undo", "-rm", "-y"], cwd);
 

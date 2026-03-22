@@ -1,20 +1,26 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import {
   createOrSwitchBranch,
   createSnapshotCommit,
+  deleteLocalBranch,
+  deleteRef,
   ensureLocalExcludes,
   getCurrentBranch,
   getCurrentBranchName,
+  getLocalBranchRefs,
   getHeadCommit,
   hasDirtyWorktree,
   importIntoJj,
   initGitRepo,
   initJjRepo,
   isGitRepo,
+  listRefs,
   restoreHeadWorktree,
+  switchToDetachedCommit,
   updateRef,
 } from "./git";
+import { run } from "./shell";
 import type {
   FreezeRecord,
   LaneRecord,
@@ -43,6 +49,26 @@ import {
 export const JJK_DIR = ".jjk";
 const REPO_FILE = "repo.json";
 const FREEZE_DIR = "freezes";
+const HISTORY_FILE = "history.json";
+const BACKUPS_DIR = "backups";
+
+interface WorkspaceSnapshot {
+  id: string;
+  createdAt: string;
+  reason: string;
+  repo: RepoData;
+  git: {
+    currentBranch: string | null;
+    headCommit: string | null;
+    branches: Record<string, string>;
+  };
+}
+
+interface SnapshotHistory {
+  version: 1;
+  index: number;
+  entries: WorkspaceSnapshot[];
+}
 
 export function findSafeSpaceRoot(startCwd: string): string | null {
   let current = resolve(startCwd);
@@ -70,6 +96,79 @@ export function requireSafeSpace(startCwd: string): string {
 
 export function repoFilePath(root: string): string {
   return join(root, JJK_DIR, REPO_FILE);
+}
+
+function historyFilePath(root: string): string {
+  return join(root, JJK_DIR, HISTORY_FILE);
+}
+
+function backupsDirPath(root: string): string {
+  return join(root, JJK_DIR, BACKUPS_DIR);
+}
+
+function writeRepoExact(root: string, repo: RepoData): void {
+  writeFileSync(repoFilePath(root), `${JSON.stringify(repo, null, 2)}\n`);
+}
+
+function snapshotFingerprint(snapshot: WorkspaceSnapshot): string {
+  return JSON.stringify({
+    repo: snapshot.repo,
+    git: snapshot.git,
+  });
+}
+
+function loadSnapshotHistory(root: string): SnapshotHistory {
+  const path = historyFilePath(root);
+  if (!existsSync(path)) {
+    return {
+      version: 1,
+      index: -1,
+      entries: [],
+    };
+  }
+
+  return JSON.parse(readFileSync(path, "utf8")) as SnapshotHistory;
+}
+
+function saveSnapshotHistory(root: string, history: SnapshotHistory): void {
+  writeFileSync(historyFilePath(root), `${JSON.stringify(history, null, 2)}\n`);
+}
+
+function captureWorkspaceSnapshot(root: string, reason: string): WorkspaceSnapshot {
+  return {
+    id: shortId(),
+    createdAt: nowIso(),
+    reason,
+    repo: loadRepo(root),
+    git: {
+      currentBranch: getCurrentBranchName(root),
+      headCommit: getHeadCommit(root),
+      branches: getLocalBranchRefs(root),
+    },
+  };
+}
+
+export function recordWorkspaceSnapshot(root: string, reason: string): WorkspaceSnapshot {
+  const history = loadSnapshotHistory(root);
+  const snapshot = captureWorkspaceSnapshot(root, reason);
+  const current = history.index >= 0 ? history.entries[history.index] ?? null : null;
+  if (current && snapshotFingerprint(current) === snapshotFingerprint(snapshot)) {
+    return current;
+  }
+
+  history.entries = history.entries.slice(0, history.index + 1);
+  history.entries.push(snapshot);
+  history.index = history.entries.length - 1;
+  saveSnapshotHistory(root, history);
+  return snapshot;
+}
+
+export function ensureWorkspaceSnapshot(root: string, reason: string): WorkspaceSnapshot {
+  const history = loadSnapshotHistory(root);
+  if (history.index >= 0 && history.entries[history.index]) {
+    return history.entries[history.index]!;
+  }
+  return recordWorkspaceSnapshot(root, reason);
 }
 
 function normalizeStateRecord(state: StateRecord): StateRecord {
@@ -134,6 +233,7 @@ export function initSafeSpace(startCwd: string): { root: string; repo: RepoData 
   const jjkRoot = join(root, JJK_DIR);
   mkdirSync(jjkRoot, { recursive: true });
   mkdirSync(join(jjkRoot, FREEZE_DIR), { recursive: true });
+  mkdirSync(join(jjkRoot, BACKUPS_DIR), { recursive: true });
 
   const filePath = repoFilePath(root);
   if (!existsSync(filePath)) {
@@ -182,7 +282,9 @@ export function initSafeSpace(startCwd: string): { root: string; repo: RepoData 
     saveRepo(root, seeded);
   }
 
-  return { root, repo: loadRepo(root) };
+  const loaded = loadRepo(root);
+  ensureWorkspaceSnapshot(root, "init");
+  return { root, repo: loaded };
 }
 
 export function ensureLane(
@@ -1010,6 +1112,161 @@ export function resolveLatestStateForBranch(root: string, query: string): StateR
   }
 
   throw new Error(`No saved state is available for branch \`${trimmed}\`.`);
+}
+
+export function restoreWorkspaceSnapshot(root: string, snapshot: WorkspaceSnapshot): void {
+  if (hasDirtyWorktree(root)) {
+    throw new Error("Cannot restore a jjk snapshot while the worktree has uncommitted changes.");
+  }
+
+  for (const [branch, commit] of Object.entries(snapshot.git.branches)) {
+    updateRef(root, `refs/heads/${branch}`, commit);
+  }
+
+  const targetBranch = snapshot.git.currentBranch;
+  const targetCommit = snapshot.git.headCommit;
+  if (targetBranch && snapshot.git.branches[targetBranch]) {
+    createOrSwitchBranch(root, targetBranch, snapshot.git.branches[targetBranch], {
+      force: true,
+      reset: true,
+    });
+  } else if (targetCommit) {
+    switchToDetachedCommit(root, targetCommit, {
+      discardChanges: true,
+    });
+  }
+
+  const currentBranches = getLocalBranchRefs(root);
+  const activeBranch = getCurrentBranchName(root);
+  for (const branch of Object.keys(currentBranches)) {
+    if (snapshot.git.branches[branch]) {
+      continue;
+    }
+    if (!branch.startsWith("jjk/")) {
+      continue;
+    }
+    if (activeBranch === branch) {
+      continue;
+    }
+    deleteLocalBranch(root, branch);
+  }
+
+  for (const ref of listLocalStateRefs(root)) {
+    deleteRef(root, ref);
+  }
+
+  writeRepoExact(root, snapshot.repo);
+  for (const state of snapshot.repo.states) {
+    updateRef(root, `refs/jjk/states/${state.id}`, stateGitCommit(state));
+  }
+  importIntoJj(root);
+}
+
+function listLocalStateRefs(root: string): string[] {
+  const refs = getLocalJjkStateRefs(root);
+  return Object.keys(refs);
+}
+
+function getLocalJjkStateRefs(root: string): Record<string, string> {
+  return Object.fromEntries(
+    listRefs(root, "refs/jjk/states")
+      .map((ref) => [ref, getHeadForRef(root, ref)] as const)
+      .filter((entry) => entry[1]),
+  );
+}
+
+function getHeadForRef(root: string, ref: string): string {
+  const result = getLocalBranchRefs(root);
+  if (ref.startsWith("refs/heads/")) {
+    return result[ref.slice("refs/heads/".length)] ?? "";
+  }
+  const value = readRef(root, ref);
+  return value;
+}
+
+function readRef(root: string, ref: string): string {
+  return run(["git", "rev-parse", "--verify", ref], {
+    cwd: root,
+    allowFailure: true,
+  }).stdout;
+}
+
+export function undoWorkspaceSnapshot(root: string): WorkspaceSnapshot {
+  const history = loadSnapshotHistory(root);
+  if (history.index <= 0 || history.entries.length === 0) {
+    throw new Error("No earlier jjk snapshot is available.");
+  }
+
+  const targetIndex = history.index - 1;
+  const snapshot = history.entries[targetIndex]!;
+  restoreWorkspaceSnapshot(root, snapshot);
+  history.index = targetIndex;
+  saveSnapshotHistory(root, history);
+  return snapshot;
+}
+
+export function redoWorkspaceSnapshot(root: string): WorkspaceSnapshot {
+  const history = loadSnapshotHistory(root);
+  if (history.index < 0 || history.index >= history.entries.length - 1) {
+    throw new Error("No later jjk snapshot is available.");
+  }
+
+  const targetIndex = history.index + 1;
+  const snapshot = history.entries[targetIndex]!;
+  restoreWorkspaceSnapshot(root, snapshot);
+  history.index = targetIndex;
+  saveSnapshotHistory(root, history);
+  return snapshot;
+}
+
+export function createBackup(root: string, label?: string): string {
+  const trimmed = label?.trim() || "";
+  const snapshot = captureWorkspaceSnapshot(root, trimmed || "backup");
+  const defaultBase = `backup_${snapshot.createdAt.slice(0, 19).replace(/[:T]/g, "-")}`;
+  const looksLikePath =
+    trimmed.includes("/") ||
+    trimmed.includes("\\") ||
+    trimmed.startsWith(".") ||
+    trimmed.endsWith(".json");
+  const path = trimmed.length === 0
+    ? join(backupsDirPath(root), `${defaultBase}.json`)
+    : looksLikePath
+      ? resolve(root, trimmed.endsWith(".json") ? trimmed : `${trimmed}.json`)
+      : join(backupsDirPath(root), `${branchSegment(trimmed)}.json`);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(snapshot, null, 2)}\n`);
+  return path;
+}
+
+export function resolveBackupPath(root: string, query: string): string {
+  const trimmed = query.trim();
+  if (trimmed.length === 0) {
+    throw new Error("Provide a backup file to load.");
+  }
+
+  const direct = resolve(root, trimmed);
+  if (existsSync(direct)) {
+    return direct;
+  }
+
+  const backupPath = join(backupsDirPath(root), trimmed);
+  if (existsSync(backupPath)) {
+    return backupPath;
+  }
+
+  const withJson = `${backupPath}.json`;
+  if (existsSync(withJson)) {
+    return withJson;
+  }
+
+  throw new Error(`No backup matched \`${trimmed}\`.`);
+}
+
+export function loadBackup(root: string, query: string): { path: string; snapshot: WorkspaceSnapshot } {
+  const path = resolveBackupPath(root, query);
+  const snapshot = JSON.parse(readFileSync(path, "utf8")) as WorkspaceSnapshot;
+  restoreWorkspaceSnapshot(root, snapshot);
+  return { path, snapshot };
 }
 
 export function rememberTimeshift(root: string, label: string): TimeshiftRecord {
