@@ -38,7 +38,7 @@ chmod +x ./bin/jjk
 - `jjk init`
   - Initialize Git if needed.
   - Initialize colocated Jujutsu when `jj` is available.
-  - Create `.jjk/repo.json` and local exclude rules.
+  - Create `.jjk/repo.json`, local exclude rules, and the initial `main` state.
 
 - `jjk status`
   - Show the current branch, lane, head, worktree counts, latest saved state, and upstream position.
@@ -52,7 +52,7 @@ chmod +x ./bin/jjk
 ### States
 
 - `jjk <description>`
-  - Save the current working tree as a real Git commit and remember it as a `save` state.
+  - Save the current working tree as a real Git commit, remember it as a `save` state, and maintain a stable continuation branch such as `jjk/green` when helpful. Saves branch away from `main` by default so `main` stays anchored until you explicitly `jjk return main`.
 
 - `jjk step [description]`
   - Save a small meaningful checkpoint.
@@ -79,7 +79,7 @@ chmod +x ./bin/jjk
   - Promote an existing saved state to `nice` or `star` without taking another snapshot.
 
 - `jjk return <query>`
-  - Resolve a state by id, label, or fuzzy match and switch to a branch rooted at that snapshot.
+  - Resolve a state by id, label, or fuzzy match, then resume its stable continuation branch when it is the tip of that line; otherwise detach at the snapshot so the next save can start a sibling branch.
 
 ### Flow
 

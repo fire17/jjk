@@ -32,6 +32,17 @@ export function branchSegment(value: string): string {
   return segment || "state";
 }
 
+export function continuationBranchName(description: string): string {
+  return `jjk/${branchSegment(description)}`;
+}
+
+export function stateDisplayBranch(state: {
+  branch: string;
+  continuationBranch?: string | null;
+}): string {
+  return state.continuationBranch ?? state.branch;
+}
+
 export function defaultLabel(kind: StateKind, description: string): string {
   const trimmed = description.trim();
   if (trimmed.length === 0) {

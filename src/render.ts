@@ -1,6 +1,6 @@
 import type { LaneRecord, MapHit, RepoData, StateRecord, TimeshiftRecord } from "./types";
 import type { AheadBehindStatus, WorktreeStatus } from "./git";
-import { formatDate, pad } from "./utils";
+import { formatDate, pad, stateDisplayBranch } from "./utils";
 
 export function renderStateSummary(state: StateRecord): string {
   return [
@@ -8,7 +8,7 @@ export function renderStateSummary(state: StateRecord): string {
     `[${state.kind}]`,
     state.label,
     `lane=${state.lane}`,
-    `branch=${state.branch}`,
+    `branch=${stateDisplayBranch(state)}`,
     formatDate(state.createdAt),
   ].join(" ");
 }
@@ -47,7 +47,7 @@ export function renderGraph(
       const currentMarker = state.id === options?.currentStateId ? "*" : " ";
       const leafMarker = leafStateIds.has(state.id) ? "^" : " ";
       lines.push(
-        `${prefix}${connector} ${currentMarker}${leafMarker} ${state.id} [${state.kind}] ${state.label} (${state.lane})`,
+        `${prefix}${connector} ${currentMarker}${leafMarker} ${state.id} [${state.kind}] ${state.label} (${stateDisplayBranch(state)})`,
       );
       walk(state.id, `${prefix}${isLast ? "   " : "│  "}`);
     });
@@ -72,7 +72,7 @@ export function renderStateTable(states: StateRecord[]): string {
 
   for (const state of states) {
     lines.push(
-      `${pad(state.id, 10)} ${pad(state.kind, 6)} ${pad(state.lane, 16)} ${pad(state.branch, 18)} ${state.label}`,
+      `${pad(state.id, 10)} ${pad(state.kind, 6)} ${pad(stateDisplayBranch(state), 16)} ${pad(stateDisplayBranch(state), 18)} ${state.label}`,
     );
   }
 
@@ -90,7 +90,7 @@ export function renderStory(states: StateRecord[]): string {
 
   return memorable
     .map((state) =>
-      `${state.id} [${state.kind}] ${state.label}\n  ${state.description}\n  ${formatDate(state.createdAt)} on ${state.branch}`
+      `${state.id} [${state.kind}] ${state.label}\n  ${state.description}\n  ${formatDate(state.createdAt)} on ${stateDisplayBranch(state)}`
     )
     .join("\n\n");
 }

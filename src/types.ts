@@ -19,6 +19,7 @@ export interface StateRecord {
   createdAt: string;
   branch: string;
   lane: string;
+  continuationBranch?: string | null;
   commit: string;
   parentCommit: string | null;
   parentStateId: string | null;
@@ -63,7 +64,6 @@ export interface ReturnContext {
   stateId: string;
   sourceBranch: string;
   sourceLane: string;
-  branchPrefix: string;
 }
 
 export interface RepoData {
@@ -75,6 +75,7 @@ export interface RepoData {
   states: StateRecord[];
   lanes: Record<string, LaneRecord>;
   branchLaneMap: Record<string, string>;
+  allowMainBranchSave?: boolean;
   returnContext?: ReturnContext | null;
   timeshifts: TimeshiftRecord[];
   freezes: FreezeRecord[];

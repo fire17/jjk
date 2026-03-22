@@ -72,6 +72,6 @@ describe("renderGraph", () => {
     const output = renderGraph(repo, { currentStateId: "leaf2222" });
     expect(output).toContain("* current state    ^ lane leaf");
     expect(output).toContain("└─  ^ root1111 [save] baseline (main)");
-    expect(output).toContain("└─ *^ leaf2222 [step] feature step (feature)");
+    expect(output).toContain("└─ *^ leaf2222 [step] feature step (jjk/lane/feature)");
   });
 });

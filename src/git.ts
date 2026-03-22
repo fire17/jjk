@@ -129,18 +129,70 @@ export function ensureLocalExcludes(cwd: string): void {
 export function createSnapshotCommit(
   cwd: string,
   message: string,
+  options?: {
+    targetBranch?: string;
+  },
 ): {
   commit: string;
   parentCommit: string | null;
   changedFiles: number;
 } {
   exportFromJj(cwd);
+  const currentBranch = getCurrentBranchName(cwd);
+  const targetBranch = options?.targetBranch;
+  if (targetBranch && targetBranch !== currentBranch) {
+    return createCommitForRef(cwd, message, targetBranch);
+  }
   const parentCommit = getHeadCommit(cwd);
   run(["git", "add", "--all", "--", "."], { cwd });
   const changedFiles = countStatusEntries(cwd);
-  run(["git", "commit", "--allow-empty", "-m", message], { cwd });
+  run(["git", "commit", "--allow-empty", "-m", message], {
+    cwd,
+    env: commitIdentityEnv(),
+  });
   const commit = run(["git", "rev-parse", "--verify", "HEAD"], { cwd }).stdout;
   return { commit, parentCommit, changedFiles };
+}
+
+function createCommitForRef(
+  cwd: string,
+  message: string,
+  targetBranch: string,
+): {
+  commit: string;
+  parentCommit: string | null;
+  changedFiles: number;
+} {
+  const tempDir = mkdtempSync(join(tmpdir(), "jjk-index-"));
+  const tempIndex = join(tempDir, "index");
+  const env = { GIT_INDEX_FILE: tempIndex };
+
+  try {
+    const targetHead = run(
+      ["git", "rev-parse", "--verify", `refs/heads/${targetBranch}`],
+      { cwd, allowFailure: true },
+    );
+    const parentCommit = targetHead.exitCode === 0
+      ? targetHead.stdout
+      : getHeadCommit(cwd);
+
+    if (parentCommit) {
+      run(["git", "read-tree", parentCommit], { cwd, env });
+    }
+
+    run(["git", "add", "--all", "--", "."], { cwd, env });
+    const changedFiles = countStatusEntries(cwd, env);
+    const tree = run(["git", "write-tree"], { cwd, env }).stdout;
+    const commitArgs = ["git", "commit-tree", tree, "-m", message];
+    if (parentCommit) {
+      commitArgs.push("-p", parentCommit);
+    }
+    const commit = run(commitArgs, { cwd, env: commitIdentityEnv(env) }).stdout;
+    updateRef(cwd, `refs/heads/${targetBranch}`, commit);
+    return { commit, parentCommit, changedFiles };
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 }
 
 function countStatusEntries(cwd: string, env?: Record<string, string>): number {
@@ -156,6 +208,27 @@ function countStatusEntries(cwd: string, env?: Record<string, string>): number {
 
 export function updateRef(cwd: string, refName: string, commit: string): void {
   run(["git", "update-ref", refName, commit], { cwd });
+}
+
+export function restoreHeadWorktree(cwd: string): void {
+  run(["git", "restore", "--source=HEAD", "--staged", "--worktree", "--", "."], {
+    cwd,
+    allowFailure: true,
+  });
+  run(["git", "clean", "-fd", "--", "."], {
+    cwd,
+    allowFailure: true,
+  });
+}
+
+function commitIdentityEnv(env?: Record<string, string>): Record<string, string> {
+  return {
+    ...(env ?? {}),
+    GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME ?? "jjk",
+    GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL ?? "jjk@example.com",
+    GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME ?? "jjk",
+    GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL ?? "jjk@example.com",
+  };
 }
 
 export function createOrSwitchBranch(
@@ -209,6 +282,24 @@ export function switchToDetachedCommit(
     return;
   }
   run(["git", "switch", "--detach", commit], { cwd });
+}
+
+export function worktreeMatchesCommit(cwd: string, commit: string): boolean {
+  const tempDir = mkdtempSync(join(tmpdir(), "jjk-match-"));
+  const tempIndex = join(tempDir, "index");
+  const env = { GIT_INDEX_FILE: tempIndex };
+
+  try {
+    run(["git", "add", "--all", "--", "."], { cwd, env });
+    const worktreeTree = run(["git", "write-tree"], { cwd, env }).stdout;
+    const commitTree = run(["git", "rev-parse", `${commit}^{tree}`], {
+      cwd,
+      allowFailure: true,
+    });
+    return commitTree.exitCode === 0 && commitTree.stdout === worktreeTree;
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 }
 
 export function listRefs(cwd: string, prefix: string): string[] {

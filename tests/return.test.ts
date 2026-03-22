@@ -16,34 +16,44 @@ describe("return flow", () => {
     run(["git", "config", "user.email", "jjk@example.com"], { cwd });
   });
 
-  test("return keeps the checkout detached and does not create a return branch when clean", async () => {
+  test("return to a tip state resumes its stable continuation branch", async () => {
     Bun.write(join(cwd, "notes.txt"), "alpha\n");
     const state = saveState(cwd, {
       kind: "star",
       description: "anchor before lane split",
     }).state;
-
-    const lane = createLane(cwd, "feature harvest");
-    Bun.write(join(cwd, "notes.txt"), "alpha\nbeta\n");
-    saveState(cwd, {
-      kind: "step",
-      description: "lane progress",
-    });
     const stateCountBeforeReturn = loadRepo(cwd).states.length;
 
     await runCli(["return", state.id], cwd);
 
     const repo = loadRepo(cwd);
-    const detached = run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], {
+    const currentBranch = run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], {
       cwd,
-      allowFailure: true,
+    }).stdout;
+
+    expect(currentBranch).toBe("jjk/anchor_before_lane_split");
+    expect(repo.branchLaneMap[`jjk/return-${state.id}`]).toBeUndefined();
+    expect(repo.returnContext).toBeNull();
+    expect(repo.states).toHaveLength(stateCountBeforeReturn);
+  });
+
+  test("return main arms the next save to land on main", async () => {
+    Bun.write(join(cwd, "notes.txt"), "green\n");
+    saveState(cwd, {
+      kind: "save",
+      description: "green",
     });
 
-    expect(detached.exitCode).not.toBe(0);
-    expect(repo.branchLaneMap[`jjk/return-${state.id}`]).toBeUndefined();
-    expect(repo.lanes["feature harvest"].branch).toBe(lane.branch);
-    expect(repo.returnContext?.stateId).toBe(state.id);
-    expect(repo.states).toHaveLength(stateCountBeforeReturn);
+    await runCli(["return", "main"], cwd);
+    Bun.write(join(cwd, "notes.txt"), "main again\n");
+    const saved = saveState(cwd, {
+      kind: "save",
+      description: "main refresh",
+    }).state;
+
+    expect(run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], { cwd }).stdout).toBe("main");
+    expect(saved.branch).toBe("main");
+    expect(run(["git", "rev-parse", "--verify", "main"], { cwd }).stdout).toBe(saved.commit);
   });
 
   test("return auto-saves only when unstaged or untracked work would be lost", async () => {
@@ -74,30 +84,38 @@ describe("return flow", () => {
     Bun.write(join(cwd, "notes.txt"), "alpha\n");
     const baseline = saveState(cwd, {
       kind: "save",
-      description: "baseline anchor",
+      description: "green",
     }).state;
 
     Bun.write(join(cwd, "notes.txt"), "purple\n");
-    saveState(cwd, {
+    const purple = saveState(cwd, {
       kind: "step",
-      description: "purple theme",
-    });
+      description: "purple",
+    }).state;
 
     await runCli(["return", baseline.id], cwd);
 
-    Bun.write(join(cwd, "notes.txt"), "alpha\nfast_mode=true\n");
-    const fastMode = saveState(cwd, {
+    const detached = run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], {
+      cwd,
+      allowFailure: true,
+    });
+    expect(detached.exitCode).not.toBe(0);
+    expect(loadRepo(cwd).returnContext?.stateId).toBe(baseline.id);
+
+    Bun.write(join(cwd, "notes.txt"), "alpha\norange=true\n");
+    const orange = saveState(cwd, {
       kind: "save",
-      description: "fast mode only",
+      description: "orange",
     }).state;
 
     const branch = run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], {
       cwd,
     }).stdout;
 
-    expect(branch).toBe("jjk/baseline_anchor/fast_mode_only");
-    expect(fastMode.branch).toBe("jjk/baseline_anchor/fast_mode_only");
-    expect(fastMode.parentStateId).toBe(baseline.id);
+    expect(branch).toBe("jjk/orange");
+    expect(orange.branch).toBe("jjk/orange");
+    expect(orange.parentStateId).toBe(baseline.id);
+    expect(purple.continuationBranch).toBe("jjk/purple");
     expect(loadRepo(cwd).returnContext).toBeNull();
   });
 });

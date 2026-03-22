@@ -1,0 +1,22 @@
+rm -rf ~/jjk/mock_test
+mkdir ~/jjk/mock_test
+cd ~/jjk/mock_test
+cp ../snake.py ./snake.py
+jjk init
+jjk green
+cp ../snake_purple_slow.py ./snake.py
+jjk purple
+jjk see
+
+jjk return green
+cp ../snake_orange.py snake.py 
+jjk orange
+jjk return purple
+cp ../snake_fast_purple.py snake.py
+jjk fast_purple
+jjk see
+
+jjk return orange
+jjk pick fast_purple
+jjk nice fast_orange
+jjk see

@@ -11,6 +11,7 @@ import {
   initGitRepo,
   initJjRepo,
   isGitRepo,
+  restoreHeadWorktree,
   updateRef,
 } from "./git";
 import type {
@@ -24,7 +25,7 @@ import type {
   TimeshiftRecord,
 } from "./types";
 import {
-  branchSegment,
+  continuationBranchName,
   defaultLabel,
   ensureDescription,
   findStateMatches,
@@ -102,6 +103,7 @@ export function initSafeSpace(startCwd: string): { root: string; repo: RepoData 
       states: [],
       lanes: {},
       branchLaneMap: {},
+      allowMainBranchSave: false,
       returnContext: null,
       timeshifts: [],
       freezes: [],
@@ -109,6 +111,18 @@ export function initSafeSpace(startCwd: string): { root: string; repo: RepoData 
 
     ensureLane(repo, branch, branch, branch);
     saveRepo(root, repo);
+
+    const initial = saveState(root, {
+      kind: "save",
+      description: branch,
+    }, {
+      forceCurrentBranch: branch,
+      allowMainBranchSave: true,
+      continuationBranch: null,
+    });
+    const seeded = initial.repo;
+    seeded.allowMainBranchSave = false;
+    saveRepo(root, seeded);
   }
 
   return { root, repo: loadRepo(root) };
@@ -142,7 +156,29 @@ export function ensureLane(
   return repo.lanes[name];
 }
 
-export function saveState(root: string, request: SaveStateRequest): SaveStateResult {
+function getLatestStateOnBranch(repo: RepoData, branch: string): StateRecord | null {
+  for (let index = repo.states.length - 1; index >= 0; index -= 1) {
+    if (repo.states[index]?.branch === branch) {
+      return repo.states[index] ?? null;
+    }
+  }
+  return null;
+}
+
+export function saveState(
+  root: string,
+  request: SaveStateRequest,
+): SaveStateResult;
+
+export function saveState(
+  root: string,
+  request: SaveStateRequest,
+  options: {
+    forceCurrentBranch?: string;
+    allowMainBranchSave?: boolean;
+    continuationBranch?: string | null;
+  } = {},
+): SaveStateResult {
   const repo = loadRepo(root);
   const description = ensureDescription(request.kind, request.description);
   const label = request.label ?? defaultLabel(request.kind, description);
@@ -150,14 +186,18 @@ export function saveState(root: string, request: SaveStateRequest): SaveStateRes
   if (repo.returnContext && request.kind !== "auto") {
     const currentBranch = getCurrentBranchName(root);
     if (currentBranch === null) {
-      const branchName = `jjk/${repo.returnContext.branchPrefix}/${branchSegment(description)}`;
+      const branchName = continuationBranchName(description);
       createOrSwitchBranch(root, branchName, getHeadCommit(root) ?? undefined);
     }
     repo.returnContext = null;
   }
 
-  const currentBranch = getCurrentBranchName(root);
-  const branch = currentBranch ?? repo.returnContext?.sourceBranch ?? getCurrentBranch(root);
+  const currentBranch = options.forceCurrentBranch ?? getCurrentBranchName(root);
+  const activeBranch = currentBranch ?? repo.returnContext?.sourceBranch ?? getCurrentBranch(root);
+  const saveOnMain =
+    activeBranch === "main" &&
+    (options.allowMainBranchSave ?? repo.allowMainBranchSave ?? false);
+  const branch = activeBranch;
   const laneName =
     currentBranch === null && repo.returnContext
       ? repo.returnContext.sourceLane
@@ -167,10 +207,17 @@ export function saveState(root: string, request: SaveStateRequest): SaveStateRes
       ? repo.returnContext.sourceBranch
       : branch;
   const headCommit = getHeadCommit(root);
+  const commitTargetBranch =
+    branch === "main" && !saveOnMain
+      ? continuationBranchName(description)
+      : undefined;
   const lane = ensureLane(repo, branch, laneName, baseRef);
   const snapshot = createSnapshotCommit(
     root,
     `jjk ${request.kind}: ${description}`,
+    {
+      targetBranch: commitTargetBranch,
+    },
   );
 
   const checkedOutStateId =
@@ -182,6 +229,16 @@ export function saveState(root: string, request: SaveStateRequest): SaveStateRes
     lane.currentStateId ??
     repo.states.find((state) => state.commit === snapshot.parentCommit)?.id ??
     null;
+  const continuationBranch =
+    options.continuationBranch !== undefined
+      ? options.continuationBranch
+      : request.kind === "auto"
+      ? null
+      : branch.startsWith("jjk/")
+        ? branch
+        : branch === "main"
+          ? continuationBranchName(description)
+          : null;
 
   const state: StateRecord = {
     id: shortId(),
@@ -191,6 +248,7 @@ export function saveState(root: string, request: SaveStateRequest): SaveStateRes
     createdAt: nowIso(),
     branch,
     lane: lane.name,
+    continuationBranch,
     commit: snapshot.commit,
     parentCommit: snapshot.parentCommit,
     parentStateId,
@@ -203,11 +261,29 @@ export function saveState(root: string, request: SaveStateRequest): SaveStateRes
   repo.states.push(state);
   lane.currentStateId = state.id;
   lane.updatedAt = state.createdAt;
+  repo.allowMainBranchSave = false;
+  if (continuationBranch && continuationBranch !== branch) {
+    const continuationLane = ensureLane(repo, continuationBranch, continuationBranch, branch);
+    continuationLane.branch = continuationBranch;
+    continuationLane.baseRef = branch;
+    continuationLane.currentStateId = state.id;
+    continuationLane.updatedAt = state.createdAt;
+    repo.branchLaneMap[continuationBranch] = continuationLane.name;
+    updateRef(root, `refs/heads/${continuationBranch}`, state.commit);
+  }
+  if (commitTargetBranch && branch === "main") {
+    restoreHeadWorktree(root);
+  }
   updateRef(root, `refs/jjk/states/${state.id}`, state.commit);
   saveRepo(root, repo);
   importIntoJj(root);
 
   return { state, repo };
+}
+
+export function isTipStateOnBranch(root: string, stateId: string, branch: string): boolean {
+  const repo = loadRepo(root);
+  return getLatestStateOnBranch(repo, branch)?.id === stateId;
 }
 
 export function resolveState(root: string, query: string): StateRecord {
@@ -252,9 +328,12 @@ export function createLane(root: string, name: string): LaneRecord {
   const sourceStateId = sourceLaneName
     ? repo.lanes[sourceLaneName]?.currentStateId ?? null
     : null;
+  const sourceState = sourceStateId
+    ? repo.states.find((state) => state.id === sourceStateId) ?? null
+    : null;
   const branchName = `jjk/lane/${slugify(name)}`;
-  const headCommit = getHeadCommit(root);
-  const baseRef = headCommit ?? getCurrentBranch(root);
+  const headCommit = sourceState?.commit ?? getHeadCommit(root);
+  const baseRef = sourceState?.commit ?? headCommit ?? getCurrentBranch(root);
 
   createOrSwitchBranch(root, branchName, headCommit ?? undefined);
   const lane = ensureLane(repo, branchName, name, baseRef);

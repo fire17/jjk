@@ -3,13 +3,13 @@
 ## Implemented
 
 - `jjk init`
-  - Turn the current directory into a safe space.
+  - Turn the current directory into a safe space and save the initial `main` state.
 
 - `jjk status`
   - Show the current branch, lane, head, worktree counts, latest state, and upstream position.
 
 - `jjk <free form description>`
-  - Save the current state as a `save`.
+  - Save the current state as a `save`, usually on a stable continuation branch rather than advancing `main`.
 
 - `jjk step [description]`
   - Save a small meaningful checkpoint.
@@ -36,7 +36,7 @@
   - Promote an existing state to a memorable or approved state without taking a new snapshot.
 
 - `jjk return <query>`
-  - Fuzzy-match a state and switch to a branch rooted at that snapshot.
+  - Fuzzy-match a state and resume its stable continuation branch when possible, otherwise detach at that snapshot so the next save can start a new branch.
 
 - `jjk lane`
 - `jjk lane <name>`

@@ -19,6 +19,7 @@ import {
   pullFastForward,
   pushCurrentBranchAndStateRefs,
   switchToDetachedCommit,
+  worktreeMatchesCommit,
 } from "./git";
 import {
   renderDoctor,
@@ -48,9 +49,10 @@ import {
   resolveTimeshift,
   saveState,
   saveRepo,
+  isTipStateOnBranch,
 } from "./store";
 import type { MapHit, SaveStateRequest, StateRecord } from "./types";
-import { branchSegment, formatRelativePath, nowIso } from "./utils";
+import { formatRelativePath, nowIso, stateDisplayBranch } from "./utils";
 import { JJK_VERSION } from "./version";
 import { runWatch } from "./watch";
 import { runRepl } from "./repl";
@@ -182,8 +184,17 @@ async function handleReturn(root: string, query: string): Promise<void> {
 
   const worktree = getWorktreeStatus(root);
   const headCommit = getHeadCommit(root);
+  const alreadySavedDirtyState = worktree.dirty
+    ? repo.states
+        .slice()
+        .reverse()
+        .find((candidate) => worktreeMatchesCommit(root, candidate.commit)) ?? null
+    : null;
   let autoSaved = false;
-  if (worktree.unstaged > 0 || worktree.untracked > 0 || (!headCommit && worktree.dirty)) {
+  if (
+    !alreadySavedDirtyState &&
+    (worktree.unstaged > 0 || worktree.untracked > 0 || (!headCommit && worktree.dirty))
+  ) {
     const backToLabel = `back to ${state.id} ${state.description}`.trim();
     saveState(root, {
       kind: "auto",
@@ -193,15 +204,43 @@ async function handleReturn(root: string, query: string): Promise<void> {
     autoSaved = true;
   }
 
+  if (state.branch === "main" && state.description === "main") {
+    createOrSwitchBranch(root, "main", state.commit, {
+      force: true,
+      reset: true,
+    });
+    const repoData = loadRepo(root);
+    repoData.allowMainBranchSave = true;
+    repoData.returnContext = null;
+    saveRepo(root, repoData);
+    importIntoJj(root);
+    console.log(`returned to ${state.id} on main`);
+    return;
+  }
+
+  if (state.continuationBranch && isTipStateOnBranch(root, state.id, state.branch)) {
+    createOrSwitchBranch(root, state.continuationBranch, state.commit, {
+      force: true,
+      reset: true,
+    });
+    const repoData = loadRepo(root);
+    repoData.allowMainBranchSave = false;
+    repoData.returnContext = null;
+    saveRepo(root, repoData);
+    importIntoJj(root);
+    console.log(`returned to ${state.id} on ${stateDisplayBranch(state)}`);
+    return;
+  }
+
   switchToDetachedCommit(root, state.commit, {
-    discardChanges: autoSaved,
+    discardChanges: autoSaved || Boolean(alreadySavedDirtyState),
   });
   const repoData = loadRepo(root);
+  repoData.allowMainBranchSave = false;
   repoData.returnContext = {
     stateId: state.id,
     sourceBranch: state.branch,
     sourceLane: state.lane,
-    branchPrefix: branchSegment(state.description),
   };
   saveRepo(root, repoData);
   importIntoJj(root);

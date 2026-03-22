@@ -42,10 +42,10 @@ This means:
 
 Saving a state currently works like this:
 
-1. Use a temporary Git index so the working tree and real index remain untouched.
-2. Stage the project snapshot into that temporary index.
-3. Write a tree object.
-4. Stage tracked and untracked changes, then create a real Git commit on the current branch.
+1. `jjk init` anchors the starting project snapshot as the initial `main` state.
+2. Most saves stage tracked and untracked changes and create a real Git commit for the state's active line.
+3. Saves that originate from `main` branch away to stable refs like `jjk/green` so the `main` branch stays anchored.
+4. An explicit `jjk return main` arms the next save to land on `main` again.
 5. Update `refs/jjk/states/<id>`.
 6. Record the higher-level meaning in `.jjk/repo.json`.
 
@@ -56,8 +56,9 @@ This keeps each saved state aligned with a concrete Git commit instead of a hidd
 `jjk return <query>`:
 
 1. resolves a state by id, label, description, or fuzzy match
-2. creates or switches to a branch rooted at that state commit
-3. keeps the lane association in `.jjk`
+2. resumes the state's stable continuation branch when that state is the tip of its current line
+3. otherwise detaches at that state commit so the next explicit save can begin a new sibling branch
+4. keeps the lane association in `.jjk`
 
 This makes rollback and experimentation cheap.
 
