@@ -52,6 +52,15 @@ export function stateGitCommit(state: {
   return state.metadata?.gitCommit ?? state.commit;
 }
 
+export function stateMessage(state: {
+  metadata?: {
+    message?: string;
+  };
+}): string | null {
+  const message = state.metadata?.message?.trim();
+  return message && message.length > 0 ? message : null;
+}
+
 export function shortCommit(commit: string, length = 12): string {
   return commit.slice(0, length);
 }
@@ -128,6 +137,7 @@ export function findStateMatches(
         state.kind,
         state.label,
         state.description,
+        stateMessage(state) ?? "",
         stateDisplayBranch(state),
       ].join(" ");
       const score = fuzzyScore(query, corpus);
@@ -146,6 +156,8 @@ export function ensureDescription(kind: StateKind, description: string): string 
   switch (kind) {
     case "new":
       return "new branch state";
+    case "cherry":
+      return "picked state changes";
     case "step":
       return "small meaningful checkpoint";
     case "nice":
@@ -157,6 +169,32 @@ export function ensureDescription(kind: StateKind, description: string): string 
     default:
       return "saved state";
   }
+}
+
+export function parseStateLabelAndMessage(input: string): {
+  description: string;
+  label?: string;
+  message?: string;
+} {
+  const trimmed = input.trim();
+  const separatorIndex = trimmed.indexOf(",");
+
+  if (separatorIndex <= 0) {
+    return { description: trimmed };
+  }
+
+  const label = trimmed.slice(0, separatorIndex).trim();
+  const message = trimmed.slice(separatorIndex + 1).trim();
+
+  if (label.length === 0 || message.length === 0) {
+    return { description: trimmed };
+  }
+
+  return {
+    description: label,
+    label,
+    message,
+  };
 }
 
 export function parseWords(input: string): string[] {

@@ -8,7 +8,7 @@ It gives humans and agents a higher-level workflow on top of Git and Jujutsu: sa
 
 ## What Exists In This Repo
 
-- A Bun/TypeScript CLI with safe-space setup, state saves, graph rendering, fuzzy return, watch mode, lane creation, story view, freeze bundles, doctor checks, push/pull helpers, and experimental timeshift records.
+- A Bun/TypeScript CLI with safe-space setup, state saves, graph rendering, fuzzy return, current-state navigation history, watch mode, lane creation, story view, freeze bundles, doctor checks, push/pull helpers, and experimental timeshift records.
 - A product layer with a README, operating docs, a product site, a Hacker News launch post, and a Codex skill bundle.
 - A storage model in `.jjk/` that tracks states and lanes without forcing normal Git branches to become the primary UX.
 
@@ -43,6 +43,9 @@ chmod +x ./bin/jjk
 - `jjk status`
   - Show the current branch, lane, head, worktree counts, latest saved state, and upstream position.
 
+- `jjk current`
+  - Show the current saved state that matches your workspace, including its lane, branch, parent, commit, and navigation-history position.
+
 - `jjk map`
   - Scan downward from the current directory for project markers such as `.git`, `.jj`, `.jjk`, and `package.json`.
 
@@ -53,6 +56,7 @@ chmod +x ./bin/jjk
 
 - `jjk <description>`
   - Save the current working tree as a real Git commit, remember it as a `save` state, and maintain a stable continuation branch such as `jjk/green` when helpful. Saves branch away from `main` by default so `main` stays anchored until you explicitly `jjk return main`.
+  - If you write `jjk <label>, <desc>`, `jjk` treats the text before the first comma as the state label and saves the text after the comma as a state message in metadata. `jjk see` shows that message alongside the state.
 
 - `jjk step [description]`
   - Save a small meaningful checkpoint.
@@ -81,6 +85,21 @@ chmod +x ./bin/jjk
 - `jjk return <query>`
   - Resolve a state by id, label, or fuzzy match, then resume its stable continuation branch when it is the tip of that line; otherwise detach at the snapshot so the next save can start a sibling branch.
 
+- `jjk return -`
+  - Jump back to the previously visited state, like `cd -`, and keep toggling if you repeat it.
+
+- `jjk back`
+  - Step backward through visited current-state history.
+
+- `jjk forward`
+  - Step forward through visited current-state history.
+
+- `jjk up`
+  - Move to the parent state of the current state.
+
+- `jjk down`
+  - Move to a child state of the current state. If there is more than one child, `jjk` will prefer your forward-history path or prompt you interactively.
+
 ### Flow
 
 - `jjk lane <name>`
@@ -92,10 +111,9 @@ chmod +x ./bin/jjk
 - `jjk watch`
   - Watch the filesystem and create grouped `auto` states after a debounce window.
 
-- `jjk up`
+- `jjk push`
   - Push the current branch and all `refs/jjk/states/*` refs to `origin`.
 
-- `jjk down`
 - `jjk pull`
   - Fetch remote `refs/jjk/states/*` and fast-forward pull when possible.
 
@@ -118,6 +136,7 @@ chmod +x ./bin/jjk
 - Git stores real objects and compatibility refs.
 - Jujutsu is enabled when available for graph/recovery integration.
 - `.jjk/repo.json` stores the meaning layer: labels, descriptions, kinds, lanes, timeshifts, and freezes.
+- State metadata can also hold an optional state message when you save with `jjk <label>, <desc>`.
 
 The current implementation snapshots the working tree into hidden Git commits under `refs/jjk/states/*`. This gives stateful recall without forcing every save onto the visible branch history.
 

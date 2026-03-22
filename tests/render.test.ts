@@ -41,6 +41,10 @@ describe("renderGraph", () => {
           parentStateId: "root1111",
           tags: [],
           stats: { changedFiles: 1 },
+          metadata: {
+            gitCommit: "bbbb",
+            message: "parser rewrite in progress",
+          },
         },
       ],
       lanes: {
@@ -72,7 +76,9 @@ describe("renderGraph", () => {
     const output = renderGraph(repo, { currentStateId: "leaf2222" });
     expect(output).toContain("* current state    ^ branch leaf");
     expect(output).toContain("└─  ^ root1111 [save] baseline (main)");
-    expect(output).toContain("└─ *^ leaf2222 [step] feature step (jjk/lane/feature)");
+    expect(output).toContain(
+      "└─ *^ leaf2222 [step] feature step (jjk/lane/feature) | parser rewrite in progress",
+    );
   });
 
   test("can colorize output by branch", () => {
@@ -485,5 +491,208 @@ describe("renderGraph", () => {
     expect(text).toContain("ff698b81");
     expect(text).not.toContain("ff698b81120d");
     expect(text).toContain("git=1234567890ab");
+  });
+
+  test("shows state messages in the state table", () => {
+    const repo: RepoData = {
+      version: 1,
+      safeSpaceId: "safe1234",
+      createdAt: "2026-03-22T00:00:00.000Z",
+      updatedAt: "2026-03-22T00:00:00.000Z",
+      settings: {
+        watchDebounceMs: 1200,
+        autoStatePrefix: "auto",
+      },
+      states: [
+        {
+          id: "green111",
+          kind: "save",
+          label: "green",
+          description: "green",
+          createdAt: "2026-03-22T00:00:00.000Z",
+          branch: "jjk/green",
+          continuationBranch: "jjk/green",
+          lane: "green",
+          commit: "aaaaaaaa1234",
+          parentCommit: null,
+          parentStateId: null,
+          tags: [],
+          stats: { changedFiles: 1 },
+          metadata: {
+            gitCommit: "aaaaaaaa1234",
+            message: "parser rewrite in progress",
+          },
+        },
+      ],
+      lanes: {
+        green: {
+          name: "green",
+          branch: "jjk/green",
+          baseRef: "main",
+          createdAt: "2026-03-22T00:00:00.000Z",
+          updatedAt: "2026-03-22T00:00:00.000Z",
+          currentStateId: "green111",
+        },
+      },
+      branchLaneMap: {
+        "jjk/green": "green",
+      },
+      timeshifts: [],
+      freezes: [],
+    };
+
+    const table = renderStateTable(repo.states, { repo });
+    expect(table).toContain("label | message");
+    expect(table).toContain("base");
+    expect(table).toContain("cherry");
+    expect(table).toContain("green | parser rewrite in progress");
+  });
+
+  test("shows base and cherry state ids in the state table", () => {
+    const repo: RepoData = {
+      version: 1,
+      safeSpaceId: "safe1234",
+      createdAt: "2026-03-22T00:00:00.000Z",
+      updatedAt: "2026-03-22T00:00:00.000Z",
+      settings: {
+        watchDebounceMs: 1200,
+        autoStatePrefix: "auto",
+      },
+      states: [
+        {
+          id: "base1111",
+          kind: "save",
+          label: "green",
+          description: "green",
+          createdAt: "2026-03-22T00:00:00.000Z",
+          branch: "jjk/green",
+          continuationBranch: "jjk/green",
+          lane: "green",
+          commit: "aaaaaaaa1234",
+          parentCommit: null,
+          parentStateId: null,
+          tags: [],
+          stats: { changedFiles: 1 },
+          metadata: {
+            gitCommit: "aaaaaaaa1234",
+          },
+        },
+        {
+          id: "cherry22",
+          kind: "cherry",
+          label: "cherry_purple",
+          description: "picked purple",
+          createdAt: "2026-03-22T00:01:00.000Z",
+          branch: "jjk/green",
+          continuationBranch: "jjk/green",
+          lane: "green",
+          commit: "bbbbbbbb1234",
+          parentCommit: "aaaaaaaa1234",
+          parentStateId: "base1111",
+          tags: [],
+          stats: { changedFiles: 1 },
+          metadata: {
+            gitCommit: "bbbbbbbb1234",
+            base: "base1111",
+            cherry: "source99",
+          },
+        },
+      ],
+      lanes: {
+        green: {
+          name: "green",
+          branch: "jjk/green",
+          baseRef: "main",
+          createdAt: "2026-03-22T00:00:00.000Z",
+          updatedAt: "2026-03-22T00:01:00.000Z",
+          currentStateId: "cherry22",
+        },
+      },
+      branchLaneMap: {
+        "jjk/green": "green",
+      },
+      timeshifts: [],
+      freezes: [],
+    };
+
+    const table = renderStateTable(repo.states, { repo });
+    expect(table).toContain("cherry_purple");
+    expect(table).toContain("base1111");
+    expect(table).toContain("source99");
+  });
+
+  test("pads state table text columns dynamically", () => {
+    const repo: RepoData = {
+      version: 1,
+      safeSpaceId: "safe1234",
+      createdAt: "2026-03-22T00:00:00.000Z",
+      updatedAt: "2026-03-22T00:00:00.000Z",
+      settings: {
+        watchDebounceMs: 1200,
+        autoStatePrefix: "auto",
+      },
+      states: [
+        {
+          id: "short111",
+          kind: "save",
+          label: "short",
+          description: "short",
+          createdAt: "2026-03-22T00:00:00.000Z",
+          branch: "jjk/a",
+          continuationBranch: "jjk/a",
+          lane: "a",
+          commit: "aaaaaaaa1234",
+          parentCommit: null,
+          parentStateId: null,
+          tags: [],
+          stats: { changedFiles: 1 },
+          metadata: {
+            gitCommit: "aaaaaaaa1234",
+            base: "base1111",
+            cherry: "src11111",
+          },
+        },
+        {
+          id: "long2222",
+          kind: "cherry",
+          label: "a_much_longer_label",
+          description: "a much longer label",
+          createdAt: "2026-03-22T00:01:00.000Z",
+          branch: "jjk/a_very_long_branch_name",
+          continuationBranch: "jjk/a_very_long_branch_name",
+          lane: "a_very_long_lane_name",
+          commit: "bbbbbbbb1234",
+          parentCommit: "aaaaaaaa1234",
+          parentStateId: "short111",
+          tags: [],
+          stats: { changedFiles: 1 },
+          metadata: {
+            gitCommit: "bbbbbbbb1234",
+            message: "with a longer message too",
+            base: "base2222",
+            cherry: "src22222",
+          },
+        },
+      ],
+      lanes: {
+        a: {
+          name: "a",
+          branch: "jjk/a",
+          baseRef: "main",
+          createdAt: "2026-03-22T00:00:00.000Z",
+          updatedAt: "2026-03-22T00:01:00.000Z",
+          currentStateId: "long2222",
+        },
+      },
+      branchLaneMap: {
+        "jjk/a": "a",
+      },
+      timeshifts: [],
+      freezes: [],
+    };
+
+    const lines = renderStateTable(repo.states, { repo }).split("\n");
+    expect(lines[1]?.indexOf("base1111")).toBe(lines[2]?.indexOf("base2222"));
+    expect(lines[1]?.indexOf("src11111")).toBe(lines[2]?.indexOf("src22222"));
   });
 });

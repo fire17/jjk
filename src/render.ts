@@ -7,6 +7,7 @@ import {
   shortStateId,
   stateDisplayBranch,
   stateGitCommit,
+  stateMessage,
 } from "./utils";
 
 const ANSI_RESET = "\u001b[0m";
@@ -41,6 +42,15 @@ export function renderStateSummaryWithOptions(
   }
 
   return parts.join(" ");
+}
+
+function appendStateMessage(text: string, state: StateRecord): string {
+  const message = stateMessage(state);
+  return message ? `${text} | ${message}` : text;
+}
+
+function shortLinkedStateId(stateId: string | undefined): string {
+  return stateId ? shortStateId(stateId) : "-";
 }
 
 export function renderStateChoiceTable(
@@ -115,7 +125,10 @@ export function renderGraph(
       const isCurrent = state.id === options?.currentStateId;
       const isLeaf = leafStateIds.has(state.id);
       const leafMarker = isLeaf ? "^" : " ";
-      const line = `${prefix}${connector} ${currentMarker}${leafMarker} ${shortStateId(state.id)} [${state.kind}] ${state.label} (${stateDisplayBranch(state)})`;
+      const line = appendStateMessage(
+        `${prefix}${connector} ${currentMarker}${leafMarker} ${shortStateId(state.id)} [${state.kind}] ${state.label} (${stateDisplayBranch(state)})`,
+        state,
+      );
       lines.push(
         colorizeBranchLine(
           line,
@@ -149,16 +162,41 @@ export function renderStateTable(
     return "No states saved yet.";
   }
 
+  const separator = "  ";
+  const idWidth = Math.max(8, "id".length, ...states.map((state) => shortStateId(state.id).length));
+  const gitWidth = Math.max(
+    8,
+    "git".length,
+    ...states.map((state) => shortCommit(stateGitCommit(state), 8).length),
+  );
+  const kindWidth = Math.max(6, "kind".length, ...states.map((state) => state.kind.length));
+  const laneWidth = Math.max(4, "lane".length, ...states.map((state) => state.lane.length));
+  const branchWidth = Math.max(
+    6,
+    "branch".length,
+    ...states.map((state) => stateDisplayBranch(state).length),
+  );
+  const labelWidth = Math.max(
+    "label | message".length,
+    ...states.map((state) => appendStateMessage(state.label, state).length),
+  );
+  const baseWidth = Math.max(4, "base".length, ...states.map((state) => shortLinkedStateId(state.metadata?.base).length));
+  const cherryWidth = Math.max(
+    6,
+    "cherry".length,
+    ...states.map((state) => shortLinkedStateId(state.metadata?.cherry).length),
+  );
   const lines = [
-    `${pad("id", 10)} ${pad("git", 8)} ${pad("kind", 6)} ${pad("lane", 16)} ${pad("branch", 18)} label`,
+    `${pad("id", idWidth)}${separator}${pad("git", gitWidth)}${separator}${pad("kind", kindWidth)}${separator}${pad("lane", laneWidth)}${separator}${pad("branch", branchWidth)}${separator}${pad("label | message", labelWidth)}${separator}${pad("base", baseWidth)}${separator}${pad("cherry", cherryWidth)}`,
   ];
   const leafStateIds = resolveBranchLeafStateIds(states, options?.repo);
 
   for (const state of states) {
-    const line = `${pad(shortStateId(state.id), 8)} ${pad(shortCommit(stateGitCommit(state), 8), 8)} ${pad(state.kind, 6)} ${pad(stateDisplayBranch(state), 16)} ${pad(stateDisplayBranch(state), 18)} ${state.label}`;
+    const labelText = appendStateMessage(state.label, state);
+    const lineWithLinks = `${pad(shortStateId(state.id), idWidth)}${separator}${pad(shortCommit(stateGitCommit(state), 8), gitWidth)}${separator}${pad(state.kind, kindWidth)}${separator}${pad(state.lane, laneWidth)}${separator}${pad(stateDisplayBranch(state), branchWidth)}${separator}${pad(labelText, labelWidth)}${separator}${pad(shortLinkedStateId(state.metadata?.base), baseWidth)}${separator}${pad(shortLinkedStateId(state.metadata?.cherry), cherryWidth)}`;
     lines.push(
       colorizeBranchLine(
-        line,
+        lineWithLinks,
         stateDisplayBranch(state),
         options?.colorize === true,
         leafStateIds.has(state.id),
@@ -261,6 +299,31 @@ export function renderStory(states: StateRecord[]): string {
       `${shortStateId(state.id)} [${state.kind}] ${state.label}\n  ${state.description}\n  ${formatDate(state.createdAt)} on ${stateDisplayBranch(state)}`
     )
     .join("\n\n");
+}
+
+export function renderCurrentState(input: {
+  state: StateRecord;
+  parentState: StateRecord | null;
+  workspaceBranch: string | null;
+  historyIndex: number;
+  historyLength: number;
+}): string {
+  const parent = input.parentState
+    ? `${shortStateId(input.parentState.id)} [${input.parentState.kind}] ${input.parentState.label}`
+    : "none";
+  const workspace = input.workspaceBranch ?? "detached";
+
+  return [
+    `current state: ${shortStateId(input.state.id)} [${input.state.kind}] ${input.state.label}`,
+    `description: ${input.state.description}`,
+    `lane: ${input.state.lane}`,
+    `branch: ${stateDisplayBranch(input.state)}`,
+    `workspace: ${workspace}`,
+    `git: ${shortCommit(stateGitCommit(input.state))}`,
+    `parent: ${parent}`,
+    `saved at: ${formatDate(input.state.createdAt)}`,
+    `history: ${input.historyIndex + 1}/${input.historyLength}`,
+  ].join("\n");
 }
 
 export function renderDoctor(input: {

@@ -3,8 +3,9 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCli } from "../src/commands";
-import { createLane, initSafeSpace, saveState } from "../src/store";
+import { createLane, initSafeSpace, loadRepo, saveState } from "../src/store";
 import { run } from "../src/shell";
+import { shortStateId } from "../src/utils";
 
 describe("pick flow", () => {
   let cwd = "";
@@ -33,7 +34,16 @@ describe("pick flow", () => {
     await runCli(["return", baseline.id], cwd);
     await runCli(["pick", harvested.id], cwd);
 
+    const repo = loadRepo(cwd);
+    const picked = repo.states[repo.states.length - 1];
+
     expect(readFileSync(join(cwd, "notes.txt"), "utf8")).toBe("alpha\nbeta\n");
+    expect(picked?.kind).toBe("cherry");
+    expect(picked?.label).toBe("cherry_beta_addition");
+    expect(picked?.metadata?.base).toBe(baseline.id);
+    expect(picked?.metadata?.cherry).toBe(harvested.id);
+    expect(repo.currentStateHistory?.entries.at(-1)).toBe(picked?.id);
+    expect(repo.returnContext?.stateId).toBe(picked?.id);
   });
 
   test("pick applies only the delta held by the chosen state after multiple returns", async () => {
@@ -68,6 +78,55 @@ describe("pick flow", () => {
     await runCli(["return", orange.id], cwd);
     await runCli(["pick", fastPurple.id], cwd);
 
+    const repo = loadRepo(cwd);
+    const picked = repo.states[repo.states.length - 1];
+
     expect(readFileSync(filePath, "utf8")).toBe("color=orange\nfast=true\n");
+    expect(picked?.kind).toBe("cherry");
+    expect(picked?.label).toBe("cherry_fast_purple");
+    expect(picked?.metadata?.base).toBe(orange.id);
+    expect(picked?.metadata?.cherry).toBe(fastPurple.id);
+    expect(repo.currentStateHistory?.entries.at(-1)).toBe(picked?.id);
+    expect(repo.returnContext?.stateId).toBe(picked?.id);
+  });
+
+  test("pick makes the new cherry state the visible current state", async () => {
+    Bun.write(join(cwd, "notes.txt"), "green\n");
+    const green = saveState(cwd, {
+      kind: "new",
+      description: "green",
+    }).state;
+
+    Bun.write(join(cwd, "notes.txt"), "purple\n");
+    const purple = saveState(cwd, {
+      kind: "save",
+      description: "purple",
+    }).state;
+
+    await runCli(["return", green.id], cwd);
+    await runCli(["pick", purple.id], cwd);
+
+    const repo = loadRepo(cwd);
+    const picked = repo.states[repo.states.length - 1];
+    const output: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => {
+      output.push(args.join(" "));
+    };
+
+    try {
+      await runCli(["see"], cwd);
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(output.join("\n")).toContain(`*^ ${shortStateId(picked!.id)} [cherry]`);
+    expect(output.join("\n")).toContain("cherry_purple");
+    expect(output.join("\n")).toContain(shortStateId(green.id));
+    expect(output.join("\n")).toContain(shortStateId(purple.id));
+    expect(picked?.label).toBe("cherry_purple");
+    expect(picked?.metadata?.base).toBe(green.id);
+    expect(picked?.metadata?.cherry).toBe(purple.id);
+    expect(repo.returnContext?.stateId).toBe(picked?.id);
   });
 });

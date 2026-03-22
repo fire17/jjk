@@ -8,8 +8,12 @@
 - `jjk status`
   - Show the current branch, lane, head, worktree counts, latest state, and upstream position.
 
+- `jjk current`
+  - Show the current saved state that best matches the workspace, including branch, lane, parent, commit, and history position.
+
 - `jjk <free form description>`
   - Save the current state as a `save`, usually on a stable continuation branch rather than advancing `main`.
+  - `jjk <label>, <desc>` splits on the first comma: the label becomes the state label and the trailing text is saved as a state message in metadata.
 
 - `jjk step [description]`
   - Save a small meaningful checkpoint.
@@ -22,6 +26,7 @@
 
 - `jjk see`
   - Show the logical state graph and table.
+  - When a state has a saved message from `jjk <label>, <desc>`, show it inline in the graph and table.
 
 - `jjk story`
   - Show the memorable narrative of `nice` and `star` states.
@@ -38,6 +43,21 @@
 - `jjk return <query>`
   - Fuzzy-match a state and resume its stable continuation branch when possible, otherwise detach at that snapshot so the next save can start a new branch.
 
+- `jjk return -`
+  - Jump back to the previously visited state, like `cd -`.
+
+- `jjk back`
+  - Walk backward through current-state history.
+
+- `jjk forward`
+  - Walk forward through current-state history.
+
+- `jjk up`
+  - Move to the parent state of the current state.
+
+- `jjk down`
+  - Move to a child state of the current state.
+
 - `jjk lane`
 - `jjk lane <name>`
   - List lanes or create/switch to a named lane branch.
@@ -48,10 +68,9 @@
 - `jjk watch`
   - Watch the filesystem and create grouped `auto` states on change.
 
-- `jjk up`
+- `jjk push`
   - Push the current branch and hidden `refs/jjk/states/*` refs.
 
-- `jjk down`
 - `jjk pull`
   - Fetch hidden `refs/jjk/states/*` refs and fast-forward pull when possible.
 

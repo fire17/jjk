@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { branchSegment, defaultLabel, parseWords, slugify } from "../src/utils";
+import { branchSegment, defaultLabel, parseStateLabelAndMessage, parseWords, slugify } from "../src/utils";
 
 describe("utils", () => {
   test("slugify normalizes names", () => {
@@ -21,5 +21,19 @@ describe("utils", () => {
       "return",
       "last good place",
     ]);
+  });
+
+  test("parseStateLabelAndMessage splits label and message on the first comma", () => {
+    expect(parseStateLabelAndMessage("green, parser rewrite in progress")).toEqual({
+      description: "green",
+      label: "green",
+      message: "parser rewrite in progress",
+    });
+  });
+
+  test("parseStateLabelAndMessage keeps plain labels untouched", () => {
+    expect(parseStateLabelAndMessage("green parser rewrite")).toEqual({
+      description: "green parser rewrite",
+    });
   });
 });

@@ -9,6 +9,7 @@ import {
   fetchStateRefs,
   getAheadBehind,
   getCurrentBranch,
+  getCurrentBranchName,
   getHeadCommit,
   getWorktreeStatus,
   hasDirtyWorktree,
@@ -25,6 +26,7 @@ import {
 import {
   renderDoctor,
   renderGraph,
+  renderCurrentState,
   renderLanes,
   renderMap,
   renderStateChoiceTable,
@@ -54,11 +56,13 @@ import {
   saveRepo,
   isTipStateOnBranch,
 } from "./store";
-import type { MapHit, SaveStateRequest, StateRecord } from "./types";
+import type { MapHit, RepoData, SaveStateRequest, StateRecord } from "./types";
 import {
+  branchSegment,
   continuationBranchName,
   formatRelativePath,
   nowIso,
+  parseStateLabelAndMessage,
   shortStateId,
   stateDisplayBranch,
 } from "./utils";
@@ -76,6 +80,7 @@ Safe spaces:
   jjk doctor
 
 States:
+  jjk current
   jjk <description>
   jjk save [description]
   jjk step [description]
@@ -87,14 +92,18 @@ States:
   jjk pick <state>
   jjk promote <state> <nice|star>
   jjk return <state>
+  jjk return -
+  jjk back
+  jjk forward
+  jjk up
+  jjk down
   jjk update <branch> [state]
 
 Flow:
   jjk lane
   jjk lane <name>
   jjk watch
-  jjk up
-  jjk down
+  jjk push
   jjk pull
   jjk freeze [state]
   jjk timeshift save [label]
@@ -137,20 +146,54 @@ async function handleSave(
   }
 
   const result = saveState(root, request, options);
+  syncCurrentStateHistory(root, resolveCurrentState(root, loadRepo(root).states)?.id ?? null);
   console.log(renderStateSummary(result.state));
+}
+
+function buildSaveRequest(kind: SaveStateRequest["kind"], input: string): SaveStateRequest {
+  return {
+    kind,
+    ...parseStateLabelAndMessage(input),
+  };
 }
 
 function shouldColorizeOutput(): boolean {
   return Boolean(process.stdout.isTTY) && process.env.NO_COLOR === undefined;
 }
 
+function stateMatchesWorkspace(
+  state: StateRecord,
+  branchName: string | null,
+  headCommit: string | null,
+): boolean {
+  if (!headCommit || state.commit !== headCommit) {
+    return false;
+  }
+
+  if (branchName === null) {
+    return true;
+  }
+
+  return stateDisplayBranch(state) === branchName;
+}
+
 function resolveCurrentState(root: string, states: StateRecord[]): StateRecord | null {
-  const branch = getCurrentBranch(root);
+  const branchName = getCurrentBranchName(root);
   const headCommit = getHeadCommit(root);
+  const repo = loadRepo(root);
+  const historyStateId = getCurrentStateHistoryEntry(repo);
+
+  if (historyStateId) {
+    const historyState = states.find((state) => state.id === historyStateId) ?? null;
+    if (historyState && stateMatchesWorkspace(historyState, branchName, headCommit)) {
+      return historyState;
+    }
+  }
+
   if (headCommit) {
     for (let index = states.length - 1; index >= 0; index -= 1) {
       const state = states[index];
-      if (state && state.commit === headCommit && stateDisplayBranch(state) === branch) {
+      if (state && stateMatchesWorkspace(state, branchName, headCommit)) {
         return state;
       }
     }
@@ -163,9 +206,138 @@ function resolveCurrentState(root: string, states: StateRecord[]): StateRecord |
     }
   }
 
-  const repo = loadRepo(root);
+  if (historyStateId) {
+    return states.find((state) => state.id === historyStateId) ?? null;
+  }
+
+  const branch = branchName ?? getCurrentBranch(root);
   const laneName = repo.branchLaneMap[branch];
   return laneName ? states.find((state) => state.id === repo.lanes[laneName]?.currentStateId) ?? null : null;
+}
+
+function getCurrentStateHistoryEntry(repo: RepoData): string | null {
+  const history = repo.currentStateHistory;
+  if (!history || history.index < 0 || history.index >= history.entries.length) {
+    return null;
+  }
+  return history.entries[history.index] ?? null;
+}
+
+function syncCurrentStateHistory(root: string, currentStateId: string | null): RepoData {
+  const repo = loadRepo(root);
+  const history = repo.currentStateHistory ?? { entries: [], index: -1 };
+  const activeStateId = getCurrentStateHistoryEntry(repo);
+
+  if (currentStateId && activeStateId !== currentStateId) {
+    history.entries = history.entries.slice(0, history.index + 1);
+    history.entries.push(currentStateId);
+    history.index = history.entries.length - 1;
+    repo.currentStateHistory = history;
+    saveRepo(root, repo);
+    return repo;
+  }
+
+  if (!repo.currentStateHistory) {
+    repo.currentStateHistory = history;
+    saveRepo(root, repo);
+  }
+
+  return repo;
+}
+
+function recordStateVisit(root: string, stateId: string): void {
+  const repo = loadRepo(root);
+  const history = repo.currentStateHistory ?? { entries: [], index: -1 };
+  const activeStateId = getCurrentStateHistoryEntry(repo);
+  if (activeStateId === stateId) {
+    return;
+  }
+
+  history.entries = history.entries.slice(0, history.index + 1);
+  history.entries.push(stateId);
+  history.index = history.entries.length - 1;
+  repo.currentStateHistory = history;
+  saveRepo(root, repo);
+}
+
+function moveStateHistoryIndex(root: string, index: number): void {
+  const repo = loadRepo(root);
+  const history = repo.currentStateHistory ?? { entries: [], index: -1 };
+  if (index < 0 || index >= history.entries.length) {
+    throw new Error("State history is out of range.");
+  }
+  history.index = index;
+  repo.currentStateHistory = history;
+  saveRepo(root, repo);
+}
+
+function findStateById(repo: RepoData, stateId: string): StateRecord {
+  const state = repo.states.find((candidate) => candidate.id === stateId);
+  if (!state) {
+    throw new Error(`No state matched \`${stateId}\`.`);
+  }
+  return state;
+}
+
+function resolveHistoryState(root: string, offset: -1 | 1): {
+  state: StateRecord;
+  index: number;
+} {
+  const currentState = resolveCurrentState(root, loadRepo(root).states);
+  const repo = syncCurrentStateHistory(root, currentState?.id ?? null);
+  const history = repo.currentStateHistory ?? { entries: [], index: -1 };
+  const nextIndex = history.index + offset;
+
+  if (nextIndex < 0 || nextIndex >= history.entries.length) {
+    throw new Error(offset < 0 ? "No earlier state is available." : "No later state is available.");
+  }
+
+  return {
+    state: findStateById(repo, history.entries[nextIndex] ?? ""),
+    index: nextIndex,
+  };
+}
+
+function resolvePreviousVisitedState(root: string): StateRecord {
+  const currentState = resolveCurrentState(root, loadRepo(root).states);
+  const repo = syncCurrentStateHistory(root, currentState?.id ?? null);
+  const history = repo.currentStateHistory ?? { entries: [], index: -1 };
+  const previousId = history.index > 0 ? history.entries[history.index - 1] : null;
+
+  if (!previousId) {
+    throw new Error("No previously visited state is available.");
+  }
+
+  return findStateById(repo, previousId);
+}
+
+async function resolveChildState(root: string): Promise<StateRecord> {
+  const repo = loadRepo(root);
+  const currentState = resolveCurrentState(root, repo.states);
+  if (!currentState) {
+    throw new Error("No current state is available.");
+  }
+
+  const children = repo.states.filter((state) => state.parentStateId === currentState.id);
+  if (children.length === 0) {
+    throw new Error(`No child states are available from ${shortStateId(currentState.id)}.`);
+  }
+
+  const historyRepo = syncCurrentStateHistory(root, currentState.id);
+  const history = historyRepo.currentStateHistory ?? { entries: [], index: -1 };
+  const forwardId = history.entries[history.index + 1] ?? null;
+  const preferred = forwardId
+    ? children.find((state) => state.id === forwardId) ?? null
+    : null;
+  if (preferred) {
+    return preferred;
+  }
+
+  if (children.length === 1 || !process.stdin.isTTY) {
+    return children[children.length - 1] ?? children[0]!;
+  }
+
+  return promptForState(children.slice().reverse());
 }
 
 function scanForMapHits(start: string, maxDepth = 4): MapHit[] {
@@ -213,30 +385,22 @@ function scanForMapHits(start: string, maxDepth = 4): MapHit[] {
   return hits;
 }
 
-async function handleReturn(root: string, query: string): Promise<void> {
-  const repo = loadRepo(root);
-  let state = resolveState(root, query);
-
-  if (query.trim().length > 0) {
-    const matches = repo.states.filter((candidate) => {
-      const haystack = [
-        candidate.id,
-        candidate.label,
-        candidate.description,
-        stateDisplayBranch(candidate),
-      ]
-        .join(" ")
-        .toLowerCase();
-      return haystack.includes(query.trim().toLowerCase());
-    });
-
-    if (matches.length > 1 && process.stdin.isTTY) {
-      state = await promptForState(matches.slice(0, 8));
-    }
+function activateState(
+  root: string,
+  state: StateRecord,
+  action = "returned",
+  options?: {
+    historyIndex?: number;
+    syncHistoryBeforeNavigate?: boolean;
+  },
+): string {
+  if (options?.syncHistoryBeforeNavigate !== false) {
+    const currentState = resolveCurrentState(root, loadRepo(root).states);
+    syncCurrentStateHistory(root, currentState?.id ?? null);
   }
-
   const worktree = getWorktreeStatus(root);
   const headCommit = getHeadCommit(root);
+  const repo = loadRepo(root);
   const alreadySavedDirtyState = worktree.dirty
     ? repo.states
         .slice()
@@ -267,8 +431,12 @@ async function handleReturn(root: string, query: string): Promise<void> {
     repoData.returnContext = null;
     saveRepo(root, repoData);
     importIntoJj(root);
-    console.log(`returned to ${shortStateId(state.id)} on main`);
-    return;
+    if (options?.historyIndex !== undefined) {
+      moveStateHistoryIndex(root, options.historyIndex);
+    } else {
+      recordStateVisit(root, state.id);
+    }
+    return `${action} to ${shortStateId(state.id)} on main`;
   }
 
   const returnBranch = state.continuationBranch ?? state.branch;
@@ -287,8 +455,12 @@ async function handleReturn(root: string, query: string): Promise<void> {
     };
     saveRepo(root, repoData);
     importIntoJj(root);
-    console.log(`returned to ${shortStateId(state.id)} on ${stateDisplayBranch(state)}`);
-    return;
+    if (options?.historyIndex !== undefined) {
+      moveStateHistoryIndex(root, options.historyIndex);
+    } else {
+      recordStateVisit(root, state.id);
+    }
+    return `${action} to ${shortStateId(state.id)} on ${stateDisplayBranch(state)}`;
   }
 
   switchToDetachedCommit(root, state.commit, {
@@ -303,7 +475,42 @@ async function handleReturn(root: string, query: string): Promise<void> {
   };
   saveRepo(root, repoData);
   importIntoJj(root);
-  console.log(`returned to ${shortStateId(state.id)}`);
+  if (options?.historyIndex !== undefined) {
+    moveStateHistoryIndex(root, options.historyIndex);
+  } else {
+    recordStateVisit(root, state.id);
+  }
+  return `${action} to ${shortStateId(state.id)}`;
+}
+
+async function handleReturn(root: string, query: string): Promise<void> {
+  if (query.trim() === "-") {
+    console.log(activateState(root, resolvePreviousVisitedState(root)));
+    return;
+  }
+
+  const repo = loadRepo(root);
+  let state = resolveState(root, query);
+
+  if (query.trim().length > 0) {
+    const matches = repo.states.filter((candidate) => {
+      const haystack = [
+        candidate.id,
+        candidate.label,
+        candidate.description,
+        stateDisplayBranch(candidate),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query.trim().toLowerCase());
+    });
+
+    if (matches.length > 1 && process.stdin.isTTY) {
+      state = await promptForState(matches.slice(0, 8));
+    }
+  }
+
+  console.log(activateState(root, state));
 }
 
 export async function runCli(argv: string[], cwd: string): Promise<void> {
@@ -344,10 +551,7 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
     case "save":
       await handleSave(
         root,
-        {
-          kind: "save",
-          description: args.slice(1).join(" "),
-        },
+        buildSaveRequest("save", args.slice(1).join(" ")),
         {
           allowMainBranchSave: true,
           continuationBranch: null,
@@ -357,18 +561,12 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       return;
     case "step":
     case "star":
-      await handleSave(root, {
-        kind: command,
-        description: args.slice(1).join(" "),
-      });
+      await handleSave(root, buildSaveRequest(command, args.slice(1).join(" ")));
       return;
     case "nice":
       await handleSave(
         root,
-        {
-          kind: "nice",
-          description: args.slice(1).join(" "),
-        },
+        buildSaveRequest("nice", args.slice(1).join(" ")),
         {
           suppressReturnBranchFork: true,
         },
@@ -392,6 +590,28 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
     case "story":
       console.log(renderStory(listStates(root)));
       return;
+    case "current": {
+      const currentState = resolveCurrentState(root, loadRepo(root).states);
+      if (!currentState) {
+        throw new Error("No current state is available.");
+      }
+
+      const repo = syncCurrentStateHistory(root, currentState.id);
+      const history = repo.currentStateHistory ?? { entries: [], index: -1 };
+      const parentState = currentState.parentStateId
+        ? repo.states.find((state) => state.id === currentState.parentStateId) ?? null
+        : null;
+      console.log(
+        renderCurrentState({
+          state: currentState,
+          parentState,
+          workspaceBranch: getCurrentBranchName(root),
+          historyIndex: history.index,
+          historyLength: history.entries.length,
+        }),
+      );
+      return;
+    }
     case "status": {
       const repo = loadRepo(root);
       const branch = getCurrentBranch(root);
@@ -471,6 +691,7 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
         throw new Error("Provide a state to pick.");
       }
 
+      const currentState = resolveCurrentState(root, loadRepo(root).states);
       const state = resolveState(root, query);
       if (hasDirtyWorktree(root)) {
         saveState(root, {
@@ -489,17 +710,26 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       }
 
       const picked = saveState(root, {
-        kind: "step",
+        kind: "cherry",
         description: `picked ${state.id} ${state.label}`,
+        label: `cherry_${branchSegment(state.label)}`,
+        metadata: {
+          ...(currentState?.id ? { base: currentState.id } : {}),
+          cherry: state.id,
+        },
+      });
+      const activation = activateState(root, picked.state, "returned", {
+        syncHistoryBeforeNavigate: false,
       });
       console.log(`picked ${state.id} onto ${getCurrentBranch(root)}`);
       console.log(renderStateSummary(picked.state));
+      console.log(activation);
       return;
     }
     case "promote": {
       const query = args[1] ?? "";
       const targetKind = args[2] as "nice" | "star" | undefined;
-      const description = args.slice(3).join(" ").trim();
+      const promotionInput = parseStateLabelAndMessage(args.slice(3).join(" "));
 
       if (query.length === 0 || !targetKind) {
         throw new Error("Usage: jjk promote <state> <nice|star> [description]");
@@ -510,13 +740,53 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       }
 
       const state = resolveState(root, query);
-      const promoted = promoteState(root, state.id, targetKind, description);
+      const promoted = promoteState(
+        root,
+        state.id,
+        targetKind,
+        promotionInput.description,
+        promotionInput.message,
+      );
       console.log(`promoted ${shortStateId(state.id)} to ${targetKind}`);
       console.log(renderStateSummary(promoted));
       return;
     }
     case "return":
       await handleReturn(root, args.slice(1).join(" "));
+      return;
+    case "back":
+      {
+        const target = resolveHistoryState(root, -1);
+        console.log(
+          activateState(root, target.state, "back", {
+            historyIndex: target.index,
+            syncHistoryBeforeNavigate: false,
+          }),
+        );
+      }
+      return;
+    case "forward":
+      {
+        const target = resolveHistoryState(root, 1);
+        console.log(
+          activateState(root, target.state, "forward", {
+            historyIndex: target.index,
+            syncHistoryBeforeNavigate: false,
+          }),
+        );
+      }
+      return;
+    case "up": {
+      const repo = loadRepo(root);
+      const currentState = resolveCurrentState(root, repo.states);
+      if (!currentState?.parentStateId) {
+        throw new Error("No parent state is available.");
+      }
+      console.log(activateState(root, resolveState(root, currentState.parentStateId), "up"));
+      return;
+    }
+    case "down":
+      console.log(activateState(root, await resolveChildState(root), "down"));
       return;
     case "update": {
       const branchQuery = args[1] ?? "";
@@ -533,6 +803,7 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       const targetLabel = updated.state
         ? `${shortStateId(updated.state.id)} ${updated.state.label}`
         : updated.commit.slice(0, 8);
+      syncCurrentStateHistory(root, resolveCurrentState(root, loadRepo(root).states)?.id ?? null);
       console.log(`updated ${updated.branch} to ${targetLabel}`);
       return;
     }
@@ -541,11 +812,10 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       await runWatch(root, repo.settings.watchDebounceMs);
       return;
     }
-    case "up":
+    case "push":
       pushCurrentBranchAndStateRefs(root);
       console.log("pushed current branch and jjk state refs");
       return;
-    case "down":
     case "pull":
       fetchStateRefs(root);
       pullFastForward(root);
@@ -561,11 +831,13 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       const existing = resolveLane(root, name);
       if (existing) {
         createOrSwitchBranch(root, existing.branch);
+        syncCurrentStateHistory(root, resolveCurrentState(root, loadRepo(root).states)?.id ?? null);
         console.log(`lane switched: ${existing.name} (${existing.branch})`);
         return;
       }
 
       const lane = createLane(root, name);
+      syncCurrentStateHistory(root, resolveCurrentState(root, loadRepo(root).states)?.id ?? null);
       console.log(`lane ready: ${lane.name} (${lane.branch})`);
       return;
     }
@@ -650,12 +922,14 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
             force: true,
             reset: true,
           });
+          syncCurrentStateHistory(root, resolveCurrentState(root, loadRepo(root).states)?.id ?? null);
           console.log(`timeshift restored to ${record.branch} at ${shortStateId(state.id)}`);
         } else {
           createOrSwitchBranch(root, record.branch, undefined, {
             force: true,
             reset: true,
           });
+          syncCurrentStateHistory(root, resolveCurrentState(root, loadRepo(root).states)?.id ?? null);
           console.log(`timeshift restored to branch ${record.branch}`);
         }
         console.log(`saved cwd: ${record.relativeCwd}`);
@@ -666,9 +940,6 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       return;
     }
     default:
-      await handleSave(root, {
-        kind: "new",
-        description: args.join(" "),
-      });
+      await handleSave(root, buildSaveRequest("new", args.join(" ")));
   }
 }

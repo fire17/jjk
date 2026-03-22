@@ -20,13 +20,16 @@ describe("store", () => {
     const result = saveState(cwd, {
       kind: "save",
       description: "baseline before parser rewrite",
+      message: "parser rewrite in progress",
     });
 
     expect(result.state.description).toBe("baseline before parser rewrite");
     expect(result.state.metadata?.gitCommit).toBe(result.state.commit);
+    expect(result.state.metadata?.message).toBe("parser rewrite in progress");
     const states = listStates(cwd);
     expect(states[0]?.description).toBe("main");
     expect(states[1]?.metadata?.gitCommit).toBe(states[1]?.commit);
+    expect(states[1]?.metadata?.message).toBe("parser rewrite in progress");
     expect(states).toHaveLength(2);
   });
 

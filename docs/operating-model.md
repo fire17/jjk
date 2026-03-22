@@ -15,7 +15,7 @@
    - import/export bridge for shared history visibility
 3. `.jjk`
    - meaning layer
-   - labels, descriptions, lanes, timeshifts, freezes
+   - labels, descriptions, optional state messages, lanes, timeshifts, freezes
 
 ## Persistence
 
@@ -49,6 +49,8 @@ Saving a state currently works like this:
 5. Update `refs/jjk/states/<id>`.
 6. Record the higher-level meaning in `.jjk/repo.json`.
 
+If the save input uses `jjk <label>, <desc>`, the first comma separates the state label from an optional state message. That message is stored in state metadata and surfaced in `jjk see`.
+
 This keeps each saved state aligned with a concrete Git commit instead of a hidden snapshot only.
 
 ## Return Semantics
@@ -70,14 +72,24 @@ The current implementation maps each lane to a dedicated Git branch:
 
 That is intentionally conservative. It keeps the model inspectable in plain Git while allowing `jjk` to add higher-level meaning above it.
 
-## Up / Down
+## State Navigation
 
-`jjk up` pushes:
+`jjk return -` jumps back to the previously visited state and can keep toggling between two recent places.
+
+`jjk back` and `jjk forward` walk the remembered current-state history.
+
+`jjk up` moves to the parent state of the current state.
+
+`jjk down` moves to a child state of the current state, preferring the forward-history path when there is one.
+
+## Push / Pull
+
+`jjk push` pushes:
 
 - the current branch
 - all `refs/jjk/states/*`
 
-`jjk down` / `jjk pull` fetches:
+`jjk pull` fetches:
 
 - remote `refs/jjk/states/*`
 - then performs a fast-forward pull if the current branch has an upstream

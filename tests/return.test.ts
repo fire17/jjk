@@ -150,4 +150,81 @@ describe("return flow", () => {
 
     expect(matches.map((match) => match.state.description)).toEqual(["main"]);
   });
+
+  test("return dash toggles between the current and previous visited states", async () => {
+    Bun.write(join(cwd, "notes.txt"), "green\n");
+    const green = saveState(cwd, {
+      kind: "save",
+      description: "green",
+    }).state;
+
+    Bun.write(join(cwd, "notes.txt"), "purple\n");
+    const purple = saveState(cwd, {
+      kind: "save",
+      description: "purple",
+    }).state;
+
+    await runCli(["return", green.id], cwd);
+    await runCli(["return", purple.id], cwd);
+    await runCli(["return", "-"], cwd);
+
+    expect(run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], { cwd }).stdout).toBe("jjk/green");
+
+    await runCli(["return", "-"], cwd);
+
+    expect(run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], { cwd }).stdout).toBe("jjk/purple");
+  });
+
+  test("back and forward move through visited state history", async () => {
+    Bun.write(join(cwd, "notes.txt"), "green\n");
+    const green = saveState(cwd, {
+      kind: "save",
+      description: "green",
+    }).state;
+
+    Bun.write(join(cwd, "notes.txt"), "purple\n");
+    const purple = saveState(cwd, {
+      kind: "save",
+      description: "purple",
+    }).state;
+
+    await runCli(["return", green.id], cwd);
+    await runCli(["return", purple.id], cwd);
+    await runCli(["back"], cwd);
+
+    expect(run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], { cwd }).stdout).toBe("jjk/green");
+
+    await runCli(["forward"], cwd);
+
+    const repo = loadRepo(cwd);
+    const history = repo.currentStateHistory;
+    expect(run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], { cwd }).stdout).toBe("jjk/purple");
+    expect(history?.entries.at(history?.index ?? -1)).toBe(purple.id);
+  });
+
+  test("up and down move between parent and child states", async () => {
+    Bun.write(join(cwd, "notes.txt"), "green\n");
+    const green = saveState(cwd, {
+      kind: "save",
+      description: "green",
+    }).state;
+
+    await runCli(["return", green.id], cwd);
+    Bun.write(join(cwd, "notes.txt"), "purple\n");
+    const purple = saveState(cwd, {
+      kind: "step",
+      description: "purple",
+    }).state;
+
+    await runCli(["up"], cwd);
+
+    expect(run(["git", "rev-parse", "--verify", "HEAD"], { cwd }).stdout).toBe(green.commit);
+
+    await runCli(["down"], cwd);
+
+    const repo = loadRepo(cwd);
+    const history = repo.currentStateHistory;
+    expect(run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], { cwd }).stdout).toBe("jjk/green");
+    expect(history?.entries.at(history?.index ?? -1)).toBe(purple.id);
+  });
 });

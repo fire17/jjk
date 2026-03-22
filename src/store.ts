@@ -21,6 +21,7 @@ import type {
   RepoData,
   SaveStateRequest,
   SaveStateResult,
+  StateNavigationHistory,
   StateRecord,
   StateKind,
   TimeshiftRecord,
@@ -84,11 +85,34 @@ function normalizeStateRecord(state: StateRecord): StateRecord {
   };
 }
 
+function normalizeCurrentStateHistory(
+  history: StateNavigationHistory | null | undefined,
+  states: StateRecord[],
+): StateNavigationHistory {
+  const knownStateIds = new Set(states.map((state) => state.id));
+  const entries = (history?.entries ?? []).filter((stateId) => knownStateIds.has(stateId));
+
+  if (entries.length === 0) {
+    return {
+      entries: [],
+      index: -1,
+    };
+  }
+
+  const requestedIndex = history?.index ?? entries.length - 1;
+  return {
+    entries,
+    index: Math.max(0, Math.min(requestedIndex, entries.length - 1)),
+  };
+}
+
 export function loadRepo(root: string): RepoData {
   const repo = JSON.parse(readFileSync(repoFilePath(root), "utf8")) as RepoData;
+  const states = repo.states.map((state) => normalizeStateRecord(state));
   return {
     ...repo,
-    states: repo.states.map((state) => normalizeStateRecord(state)),
+    states,
+    currentStateHistory: normalizeCurrentStateHistory(repo.currentStateHistory, states),
   };
 }
 
@@ -128,6 +152,10 @@ export function initSafeSpace(startCwd: string): { root: string; repo: RepoData 
       branchLaneMap: {},
       allowMainBranchSave: false,
       returnContext: null,
+      currentStateHistory: {
+        entries: [],
+        index: -1,
+      },
       timeshifts: [],
       freezes: [],
     };
@@ -145,6 +173,10 @@ export function initSafeSpace(startCwd: string): { root: string; repo: RepoData 
     });
     const seeded = initial.repo;
     seeded.allowMainBranchSave = false;
+    seeded.currentStateHistory = {
+      entries: [initial.state.id],
+      index: 0,
+    };
     saveRepo(root, seeded);
   }
 
@@ -192,6 +224,7 @@ function buildStateCommitMessage(input: {
   kind: string;
   label: string;
   description: string;
+  message?: string;
   branch: string;
   lane: string;
   continuationBranch?: string | null;
@@ -202,6 +235,7 @@ function buildStateCommitMessage(input: {
     `Kind: ${input.kind}`,
     `Label: ${input.label}`,
     `Description: ${input.description}`,
+    `Message: ${input.message ?? "none"}`,
     `Branch: ${input.branch}`,
     `Lane: ${input.lane}`,
     `Continuation-Branch: ${input.continuationBranch ?? "none"}`,
@@ -271,6 +305,8 @@ export function saveState(
   const returnContext = repo.returnContext ?? null;
   const description = ensureDescription(request.kind, request.description);
   const label = request.label ?? defaultLabel(request.kind, description);
+  const message = request.message?.trim() || undefined;
+  const requestMetadata = request.metadata ?? {};
   const returnedState = returnContext?.stateId
     ? repo.states.find((state) => state.id === returnContext.stateId) ?? null
     : null;
@@ -343,6 +379,7 @@ export function saveState(
     kind: request.kind,
     label,
     description,
+    message,
     branch,
     lane: lane.name,
     continuationBranch,
@@ -393,7 +430,9 @@ export function saveState(
       changedFiles: snapshot.changedFiles,
     },
     metadata: {
+      ...requestMetadata,
       gitCommit: snapshot.commit,
+      ...(message ? { message } : {}),
     },
   };
 
@@ -450,7 +489,8 @@ export function resolveState(root: string, query: string): StateRecord {
     (state) =>
       state.id === trimmed ||
       state.label === trimmed ||
-      state.description === trimmed,
+      state.description === trimmed ||
+      state.metadata?.message === trimmed,
   );
   if (exact) {
     return exact;
@@ -719,9 +759,11 @@ export function promoteState(
   sourceStateId: string,
   kind: Extract<StateKind, "nice" | "star">,
   description?: string,
+  message?: string,
 ): StateRecord {
   const repo = loadRepo(root);
   const source = repo.states.find((state) => state.id === sourceStateId);
+  const nextMessage = message?.trim() || undefined;
   if (!source) {
     throw new Error(`No state matched \`${sourceStateId}\`.`);
   }
@@ -738,6 +780,7 @@ export function promoteState(
     metadata: {
       ...(source.metadata ?? {}),
       gitCommit: source.metadata?.gitCommit ?? source.commit,
+      ...(nextMessage ? { message: nextMessage } : {}),
     },
   };
 

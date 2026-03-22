@@ -49,6 +49,19 @@ describe("save modes", () => {
     );
   });
 
+  test("comma-separated save input stores a label and state message separately", async () => {
+    Bun.write(join(cwd, "notes.txt"), "baseline\n");
+    await runCli(["green,", "parser rewrite in progress"], cwd);
+
+    const repo = loadRepo(cwd);
+    const saved = repo.states.find((state) => state.description === "green");
+
+    expect(saved?.label).toBe("green");
+    expect(saved?.description).toBe("green");
+    expect(saved?.metadata?.message).toBe("parser rewrite in progress");
+    expect(saved?.branch).toBe("jjk/green");
+  });
+
   test("jjk save on main stays on main instead of opening a jjk branch", async () => {
     Bun.write(join(cwd, "notes.txt"), "saved on main\n");
     await runCli(["save", "main_checkpoint"], cwd);

@@ -1,6 +1,7 @@
 export type StateKind =
   | "new"
   | "save"
+  | "cherry"
   | "step"
   | "nice"
   | "star"
@@ -14,6 +15,9 @@ export interface SnapshotStats {
 
 export interface StateMetadata {
   gitCommit: string;
+  message?: string;
+  base?: string;
+  cherry?: string;
   priorContexts?: Array<{
     branch: string;
     lane: string;
@@ -79,6 +83,11 @@ export interface ReturnContext {
   sourceLane: string;
 }
 
+export interface StateNavigationHistory {
+  entries: string[];
+  index: number;
+}
+
 export interface RepoData {
   version: 1;
   safeSpaceId: string;
@@ -90,6 +99,7 @@ export interface RepoData {
   branchLaneMap: Record<string, string>;
   allowMainBranchSave?: boolean;
   returnContext?: ReturnContext | null;
+  currentStateHistory?: StateNavigationHistory;
   timeshifts: TimeshiftRecord[];
   freezes: FreezeRecord[];
 }
@@ -102,6 +112,8 @@ export interface SaveStateRequest {
   kind: StateKind;
   description: string;
   label?: string;
+  message?: string;
+  metadata?: Omit<StateMetadata, "gitCommit">;
   tags?: string[];
 }
 
