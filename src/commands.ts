@@ -239,7 +239,7 @@ function buildSaveRequest(kind: SaveStateRequest["kind"], input: string): SaveSt
 }
 
 function shouldColorizeOutput(): boolean {
-  return Boolean(process.stdout.isTTY) && process.env.NO_COLOR === undefined;
+  return Boolean(process.stdout.isTTY);
 }
 
 function formatFileSize(bytes: number): string {
@@ -254,8 +254,22 @@ function formatFileSize(bytes: number): string {
 
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
-function runGitTextCommand(root: string, args: string[], emptyMessage: string): string {
-  const proc = Bun.spawnSync(["git", ...args], {
+function runGitTextCommand(
+  root: string,
+  args: string[],
+  emptyMessage: string,
+  options?: {
+    colorize?: boolean;
+  },
+): string {
+  const gitArgs = options?.colorize === undefined
+    ? args
+    : [
+      args[0] ?? "",
+      `--color=${options.colorize ? "always" : "never"}`,
+      ...args.slice(1),
+    ];
+  const proc = Bun.spawnSync(["git", ...gitArgs], {
     cwd: root,
     stdout: "pipe",
     stderr: "pipe",
@@ -263,7 +277,7 @@ function runGitTextCommand(root: string, args: string[], emptyMessage: string): 
   const output = proc.stdout.toString().trim();
   if (proc.exitCode !== 0 && proc.exitCode !== 1) {
     const details = [proc.stderr.toString().trim(), output].filter(Boolean).join("\n");
-    throw new Error(details.length > 0 ? details : `git ${args.join(" ")} failed`);
+    throw new Error(details.length > 0 ? details : `git ${gitArgs.join(" ")} failed`);
   }
   return output.length > 0 ? output : emptyMessage;
 }
@@ -840,11 +854,13 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
     case "git": {
       const subcommand = (args[1] ?? "").trim().toLowerCase();
       if (subcommand === "log") {
+        const colorize = shouldColorizeOutput();
         console.log(
           runGitTextCommand(
             root,
             ["log", "--all", "--oneline", "--graph", "--decorate"],
             "No git commits yet.",
+            { colorize },
           ),
         );
         return;

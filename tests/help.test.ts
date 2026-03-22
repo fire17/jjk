@@ -21,13 +21,40 @@ describe("help output", () => {
     console.log = originalLog;
   });
 
-  async function capture(argv: string[], runCwd = process.cwd()): Promise<string> {
+  async function capture(
+    argv: string[],
+    runCwd = process.cwd(),
+    options?: {
+      tty?: boolean;
+    },
+  ): Promise<string> {
     const logs: string[] = [];
+    const hadOwnIsTTY = Object.prototype.hasOwnProperty.call(process.stdout, "isTTY");
+    const originalIsTTY = process.stdout.isTTY;
     console.log = (...args: unknown[]) => {
       logs.push(args.join(" "));
     };
-    await runCli(argv, runCwd);
-    return logs.join("\n");
+    if (options?.tty !== undefined) {
+      Object.defineProperty(process.stdout, "isTTY", {
+        configurable: true,
+        value: options.tty,
+      });
+    }
+    try {
+      await runCli(argv, runCwd);
+      return logs.join("\n");
+    } finally {
+      if (options?.tty !== undefined) {
+        if (hadOwnIsTTY) {
+          Object.defineProperty(process.stdout, "isTTY", {
+            configurable: true,
+            value: originalIsTTY,
+          });
+        } else {
+          delete (process.stdout as { isTTY?: boolean }).isTTY;
+        }
+      }
+    }
   }
 
   test("help aliases all print the same expanded help output", async () => {
@@ -56,5 +83,22 @@ describe("help output", () => {
     expect(output).toContain("[leaf]");
     expect(output).toContain("(jjk/orange)");
     expect(output).toContain("| *");
+  });
+
+  test("graph command colorizes interactive output", async () => {
+    await runCli(["green"], cwd);
+    await runCli(["purple"], cwd);
+
+    const output = await capture(["graph"], cwd, { tty: true });
+    expect(output).toContain("\u001b[38;5;");
+    expect(output).toContain("\u001b[0m");
+  });
+
+  test("git log command forwards color in interactive output", async () => {
+    await runCli(["green"], cwd);
+
+    const output = await capture(["git", "log"], cwd, { tty: true });
+    expect(output).toContain("\u001b[");
+    expect(output).toContain("HEAD ->");
   });
 });
