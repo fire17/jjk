@@ -46,7 +46,7 @@ export function renderStateSummaryWithOptions(
     parts.splice(3, 0, `lane=${state.lane}`);
   }
 
-  return parts.join(" ");
+  return appendStateMetadata(parts.join(" "), state);
 }
 
 export function renderStateInspection(repo: RepoData, state: StateRecord): string {
@@ -107,6 +107,24 @@ export function renderStateInspection(repo: RepoData, state: StateRecord): strin
 function appendStateMessage(text: string, state: StateRecord): string {
   const message = stateMessage(state);
   return message ? `${text} | ${message}` : text;
+}
+
+function appendStateMetadata(text: string, state: StateRecord): string {
+  const metadata = state.metadata;
+  if (!metadata) {
+    return text;
+  }
+
+  const parts = [
+    metadata.status ? `status=${metadata.status}` : "",
+    metadata.assignee ? `assignee=${metadata.assignee}` : "",
+    metadata.note ? `note=${truncate(singleLine(metadata.note), 60)}` : "",
+    metadata.handoff ? `handoff=${truncate(singleLine(metadata.handoff), 60)}` : "",
+    metadata.publishedAt ? `published=${formatDate(metadata.publishedAt)}` : "",
+    metadata.quarantinedAt ? `quarantine=${formatDate(metadata.quarantinedAt)}` : "",
+  ].filter(Boolean);
+
+  return parts.length > 0 ? `${text} | ${parts.join(" | ")}` : text;
 }
 
 function singleLine(value: string): string {

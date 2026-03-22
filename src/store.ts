@@ -32,6 +32,7 @@ import type {
   SaveStateRequest,
   SaveStateResult,
   StateNavigationHistory,
+  StateMetadata,
   StateRecord,
   StateKind,
   TimeshiftRecord,
@@ -211,11 +212,23 @@ function normalizeCurrentStateHistory(
   };
 }
 
+function normalizeRepoSettings(settings: RepoData["settings"]): RepoData["settings"] {
+  return {
+    watchDebounceMs: settings.watchDebounceMs,
+    autoStatePrefix: settings.autoStatePrefix,
+    showWorkspaceSnapshotsInGit: settings.showWorkspaceSnapshotsInGit ?? false,
+    defaultBranch: settings.defaultBranch ?? null,
+    aliases: settings.aliases ?? {},
+    lockedBranches: settings.lockedBranches ?? [],
+  };
+}
+
 function loadRepoExact(root: string): RepoData {
   const repo = JSON.parse(readFileSync(repoFilePath(root), "utf8")) as RepoData;
   const states = repo.states.map((state) => normalizeStateRecord(state));
   return {
     ...repo,
+    settings: normalizeRepoSettings(repo.settings),
     states,
     currentStateHistory: normalizeCurrentStateHistory(repo.currentStateHistory, states),
   };
@@ -466,6 +479,9 @@ export function initSafeSpace(startCwd: string): { root: string; repo: RepoData 
         watchDebounceMs: 1200,
         autoStatePrefix: "auto",
         showWorkspaceSnapshotsInGit: false,
+        defaultBranch: null,
+        aliases: {},
+        lockedBranches: [],
       },
       states: [],
       lanes: {},
@@ -599,6 +615,123 @@ function withKindTags(kind: StateKind, tags: string[] | undefined): string[] {
   return Array.from(merged);
 }
 
+function normalizeLockedBranches(settings: RepoData["settings"]): string[] {
+  return Array.from(new Set(settings.lockedBranches ?? []));
+}
+
+function isBranchLockedInRepo(repo: RepoData, branch: string): boolean {
+  return (repo.settings.lockedBranches ?? []).includes(branch);
+}
+
+function assertBranchUnlocked(root: string, branch: string): void {
+  const repo = loadRepo(root);
+  if (isBranchLockedInRepo(repo, branch)) {
+    throw new Error(`Branch \`${branch}\` is locked.`);
+  }
+}
+
+export function updateStateMetadata(
+  root: string,
+  stateId: string,
+  updater: (metadata: StateMetadata | undefined) => StateMetadata | undefined,
+): StateRecord {
+  const repo = loadRepo(root);
+  const state = repo.states.find((entry) => entry.id === stateId);
+  if (!state) {
+    throw new Error(`No state matched \`${stateId}\`.`);
+  }
+
+  const updated = updater(state.metadata);
+  if (updated) {
+    state.metadata = {
+      ...(state.metadata ?? {}),
+      ...updated,
+      gitCommit: stateGitCommit(state),
+    };
+  } else {
+    state.metadata = {
+      gitCommit: stateGitCommit(state),
+    };
+  }
+
+  saveRepo(root, repo);
+  return state;
+}
+
+function resolveAliasTarget(repo: RepoData, query: string): string {
+  return repo.settings.aliases?.[query.trim()] ?? query;
+}
+
+export function listAliases(root: string): Record<string, string> {
+  return { ...(loadRepo(root).settings.aliases ?? {}) };
+}
+
+export function setAlias(root: string, name: string, query: string): Record<string, string> {
+  const repo = loadRepo(root);
+  const aliasName = name.trim();
+  if (aliasName.length === 0) {
+    throw new Error("Provide an alias name.");
+  }
+
+  repo.settings.aliases = {
+    ...(repo.settings.aliases ?? {}),
+    [aliasName]: query.trim(),
+  };
+  saveRepo(root, repo);
+  return { ...repo.settings.aliases };
+}
+
+export function removeAlias(root: string, name: string): Record<string, string> {
+  const repo = loadRepo(root);
+  const aliasName = name.trim();
+  if (aliasName.length === 0) {
+    throw new Error("Provide an alias name.");
+  }
+
+  const aliases = { ...(repo.settings.aliases ?? {}) };
+  delete aliases[aliasName];
+  repo.settings.aliases = aliases;
+  saveRepo(root, repo);
+  return aliases;
+}
+
+export function setDefaultBranch(root: string, branch: string | null): RepoData["settings"] {
+  const repo = loadRepo(root);
+  repo.settings.defaultBranch = branch?.trim() || null;
+  saveRepo(root, repo);
+  return repo.settings;
+}
+
+export function setBranchLock(root: string, branch: string, locked: boolean): string[] {
+  const repo = loadRepo(root);
+  const normalizedBranch = branch.trim();
+  if (normalizedBranch.length === 0) {
+    throw new Error("Provide a branch.");
+  }
+
+  const locks = new Set(normalizeLockedBranches(repo.settings));
+  if (locked) {
+    locks.add(normalizedBranch);
+  } else {
+    locks.delete(normalizedBranch);
+  }
+  repo.settings.lockedBranches = Array.from(locks);
+  saveRepo(root, repo);
+  return repo.settings.lockedBranches;
+}
+
+export function isBranchLocked(root: string, branch: string): boolean {
+  return isBranchLockedInRepo(loadRepo(root), branch);
+}
+
+export function annotateState(
+  root: string,
+  stateId: string,
+  updater: (metadata: StateMetadata | undefined) => StateMetadata | undefined,
+): StateRecord {
+  return updateStateMetadata(root, stateId, updater);
+}
+
 function findMostRecentStateForCommit(
   repo: RepoData,
   commit: string,
@@ -690,6 +823,9 @@ export function saveState(
 
   const currentBranch = options.forceCurrentBranch ?? getCurrentBranchName(root);
   const activeBranch = currentBranch ?? returnContext?.sourceBranch ?? getCurrentBranch(root);
+  if (isBranchLockedInRepo(repo, activeBranch)) {
+    throw new Error(`Branch \`${activeBranch}\` is locked.`);
+  }
   const saveOnMain =
     activeBranch === "main" &&
     (options.allowMainBranchSave ?? repo.allowMainBranchSave ?? false);
@@ -962,6 +1098,11 @@ export function resolveState(
     return states[states.length - 1];
   }
 
+  const aliased = resolveAliasTarget(repo, trimmed);
+  if (aliased !== trimmed) {
+    return resolveState(root, aliased, options);
+  }
+
   const exact = states.find(
     (state) =>
       state.id === trimmed ||
@@ -1146,6 +1287,9 @@ export function updateBranchTarget(
   if (!commit) {
     throw new Error("No current Git commit is available to update the branch to.");
   }
+  if (isBranchLockedInRepo(repo, branch)) {
+    throw new Error(`Branch \`${branch}\` is locked.`);
+  }
 
   const currentBranch = getCurrentBranchName(root);
   const currentHead = getHeadCommit(root);
@@ -1260,6 +1404,9 @@ export function createLane(root: string, name: string): LaneRecord {
     ? repo.states.find((state) => state.id === sourceStateId) ?? null
     : null;
   const branchName = `jjk/lane/${slugify(name)}`;
+  if (isBranchLockedInRepo(repo, branchName)) {
+    throw new Error(`Branch \`${branchName}\` is locked.`);
+  }
   const headCommit = sourceState?.commit ?? getHeadCommit(root);
   const baseRef = sourceState?.commit ?? headCommit ?? getCurrentBranch(root);
 
@@ -1279,6 +1426,9 @@ export function attachBranchToState(root: string, branch: string, stateId: strin
   if (!state) {
     throw new Error(`No state matched \`${stateId}\`.`);
   }
+  if (isBranchLockedInRepo(repo, branch)) {
+    throw new Error(`Branch \`${branch}\` is locked.`);
+  }
 
   const baseRef = stateDisplayBranch(state);
   const lane = ensureLane(repo, branch, branch, baseRef);
@@ -1297,6 +1447,9 @@ export function createBranchAtState(root: string, branch: string, stateId: strin
   const state = repo.states.find((candidate) => candidate.id === stateId);
   if (!state) {
     throw new Error(`No state matched \`${stateId}\`.`);
+  }
+  if (isBranchLockedInRepo(repo, branch)) {
+    throw new Error(`Branch \`${branch}\` is locked.`);
   }
   if (localBranchExists(root, branch)) {
     throw new Error(`Branch \`${branch}\` already exists.`);
@@ -1352,8 +1505,11 @@ export function resolveLatestStateForBranch(root: string, query: string): StateR
     throw new Error("Provide a branch to resolve.");
   }
 
-  const resolvedLane = resolveLane(root, trimmed);
-  const branch = resolvedLane?.branch ?? trimmed;
+  const aliased = resolveAliasTarget(repo, trimmed);
+  const lookup = aliased !== trimmed ? aliased : trimmed;
+
+  const resolvedLane = resolveLane(root, lookup);
+  const branch = resolvedLane?.branch ?? lookup;
   const laneName = repo.branchLaneMap[branch] ?? resolvedLane?.name ?? null;
   const lane = laneName ? repo.lanes[laneName] ?? null : null;
   const laneStateId = lane?.currentStateId ?? null;

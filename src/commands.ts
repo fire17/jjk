@@ -79,6 +79,13 @@ import {
   saveState,
   saveRepo,
   isTipStateOnBranch,
+  annotateState,
+  listAliases,
+  removeAlias,
+  setAlias,
+  setBranchLock,
+  setDefaultBranch,
+  isBranchLocked,
   starState,
   toggleStateTag,
   splitState,
@@ -145,6 +152,25 @@ States:
   jjk recover <deleted-state>
   jjk undo [-rm] [-y]
   jjk redo
+  jjk archive <state>
+  jjk quarantine <state>
+  jjk open <state>
+  jjk copy-id <query>
+  jjk recent [limit]
+  jjk aliases [add <name> <query>]
+  jjk default-branch <branch>
+  jjk config
+  jjk mark <state> <status>
+  jjk assign-note <state>, <person/note>
+  jjk ready <state>
+  jjk publish <state>
+  jjk handoff <state>
+  jjk checkpoint [description]
+  jjk autosave now
+  jjk lock <branch>
+  jjk unlock <branch>
+  jjk clean
+  jjk gc
   jjk pick <state>
   jjk promote <state> <nice|star>
   jjk compare-branch <a> <b>
@@ -530,6 +556,9 @@ function createBranchWorktree(
   state: StateRecord;
 } {
   const branch = uniqueBranchName(root, preferredBranch);
+  if (isBranchLocked(root, branch)) {
+    throw new Error(`Branch \`${branch}\` is locked.`);
+  }
   const path = uniqueWorktreePath(root, branch);
   addWorktree(root, path, branch, {
     createBranch: true,
@@ -644,6 +673,14 @@ function runGitTextCommand(
 
 function resolveDefaultState(root: string): StateRecord {
   const repo = loadRepo(root);
+  const defaultBranch = repo.settings.defaultBranch?.trim() ?? "";
+  if (defaultBranch.length > 0) {
+    const defaultState = resolveLatestStateForBranch(root, defaultBranch);
+    if (defaultState) {
+      return defaultState;
+    }
+  }
+
   const currentState = resolveCurrentState(root, repo.states) ?? repo.states[repo.states.length - 1] ?? null;
   if (!currentState) {
     throw new Error("No state is available.");
@@ -825,6 +862,63 @@ function resolveMarkerTarget(root: string, query: string): StateRecord {
     throw new Error("No current state is available.");
   }
   return target;
+}
+
+function renderConfigView(root: string): string {
+  const repo = loadRepo(root);
+  const aliases = Object.entries(listAliases(root));
+  const lockedBranches = repo.settings.lockedBranches ?? [];
+  return [
+    `default branch: ${repo.settings.defaultBranch ?? "unset"}`,
+    `snapshot refs in git: ${repo.settings.showWorkspaceSnapshotsInGit ? "on" : "off"}`,
+    `aliases: ${aliases.length > 0 ? aliases.map(([name, query]) => `${name}=${query}`).join(", ") : "none"}`,
+    `locked branches: ${lockedBranches.length > 0 ? lockedBranches.join(", ") : "none"}`,
+  ].join("\n");
+}
+
+function renderRecentStates(root: string, limit = 8): string {
+  const repo = loadRepo(root);
+  const history = repo.currentStateHistory?.entries ?? [];
+  if (history.length === 0) {
+    return "No visited states yet.";
+  }
+
+  const recentIds = history.slice(Math.max(0, history.length - limit));
+  return recentIds
+    .map((stateId, index) => {
+      const state = repo.states.find((candidate) => candidate.id === stateId);
+      if (!state) {
+        return `${index + 1}. ${stateId}`;
+      }
+      return `${index + 1}. ${renderStateSummary(state)}`;
+    })
+    .join("\n");
+}
+
+function openStateFiles(root: string, state: StateRecord): string {
+  const output = runGitTextCommand(
+    root,
+    ["show", "--name-only", "--pretty=format:", state.commit],
+    "",
+  )
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (output.length === 0) {
+    return `No files recorded for ${shortStateId(state.id)} ${state.label}.`;
+  }
+
+  const editor = process.env.EDITOR?.trim();
+  if (editor) {
+    Bun.spawnSync([editor, ...output], {
+      cwd: root,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+  }
+
+  return `open files for ${shortStateId(state.id)} ${state.label}\n${output.join("\n")}`;
 }
 
 function syncCurrentStateHistory(root: string, currentStateId: string | null): RepoData {
@@ -1247,6 +1341,236 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       const enabled = updated.tags.includes(tag);
       console.log(`${enabled ? "enabled" : "disabled"} ${tag} on ${shortStateId(updated.id)} ${updated.label}`);
       console.log(renderStateSummary(updated));
+      return;
+    }
+    case "archive": {
+      const target = resolveMarkerTarget(root, args.slice(1).join(" ").trim());
+      const archived = deleteState(root, target.id);
+      recordWorkspaceSnapshot(root, `archive:${archived.id}`);
+      console.log(`archived ${shortStateId(archived.id)} to ${archived.metadata?.deletedBranch}`);
+      return;
+    }
+    case "quarantine": {
+      const target = resolveMarkerTarget(root, args.slice(1).join(" ").trim());
+      const quarantined = annotateState(root, target.id, (metadata) => ({
+        ...(metadata ?? {}),
+        quarantinedAt: nowIso(),
+        status: "quarantined",
+      }));
+      recordWorkspaceSnapshot(root, `quarantine:${quarantined.id}`);
+      console.log(`quarantined ${shortStateId(quarantined.id)} ${quarantined.label}`);
+      console.log(renderStateSummary(quarantined));
+      return;
+    }
+    case "mark": {
+      const stateQuery = args[1] ?? "";
+      const status = args[2] ?? "";
+      if (stateQuery.length === 0 || status.length === 0) {
+        throw new Error("Usage: jjk mark <state> <status>");
+      }
+      const marked = annotateState(root, resolveState(root, stateQuery).id, (metadata) => ({
+        ...(metadata ?? {}),
+        status,
+      }));
+      recordWorkspaceSnapshot(root, `mark:${marked.id}`);
+      console.log(`marked ${shortStateId(marked.id)} as ${status}`);
+      console.log(renderStateSummary(marked));
+      return;
+    }
+    case "assign-note": {
+      const parsed = parseStateLabelAndMessage(args.slice(1).join(" "));
+      if (parsed.description.length === 0) {
+        throw new Error("Usage: jjk assign-note <state>, <person/note>");
+      }
+      const target = resolveState(root, parsed.description);
+      const [assignee, ...noteParts] = (parsed.message ?? "").split("/").map((part) => part.trim());
+      const note = noteParts.join("/").trim();
+      const assigned = annotateState(root, target.id, (metadata) => ({
+        ...(metadata ?? {}),
+        assignee: assignee && note.length > 0 ? assignee : metadata?.assignee,
+        note: note.length > 0 ? note : metadata?.note,
+      }));
+      recordWorkspaceSnapshot(root, `assign-note:${assigned.id}`);
+      console.log(`assigned note on ${shortStateId(assigned.id)} ${assigned.label}`);
+      console.log(renderStateSummary(assigned));
+      return;
+    }
+    case "ready": {
+      const target = resolveMarkerTarget(root, args.slice(1).join(" ").trim());
+      const readyState = annotateState(root, target.id, (metadata) => ({
+        ...(metadata ?? {}),
+        status: "ready",
+      }));
+      recordWorkspaceSnapshot(root, `ready:${readyState.id}`);
+      console.log(`ready ${shortStateId(readyState.id)} ${readyState.label}`);
+      console.log(renderStateSummary(readyState));
+      return;
+    }
+    case "publish": {
+      const target = resolveMarkerTarget(root, args.slice(1).join(" ").trim());
+      const published = annotateState(root, target.id, (metadata) => ({
+        ...(metadata ?? {}),
+        status: "published",
+        publishedAt: nowIso(),
+      }));
+      recordWorkspaceSnapshot(root, `publish:${published.id}`);
+      console.log(`published ${shortStateId(published.id)} ${published.label}`);
+      console.log(renderStateSummary(published));
+      return;
+    }
+    case "handoff": {
+      const parsed = parseStateLabelAndMessage(args.slice(1).join(" "));
+      const target = resolveState(root, parsed.description);
+      const handoff = annotateState(root, target.id, (metadata) => ({
+        ...(metadata ?? {}),
+        handoff: (parsed.message ?? target.description).trim(),
+      }));
+      recordWorkspaceSnapshot(root, `handoff:${handoff.id}`);
+      console.log(`handoff recorded for ${shortStateId(handoff.id)} ${handoff.label}`);
+      console.log(renderStateSummary(handoff));
+      return;
+    }
+    case "copy-id": {
+      const target = resolveMarkerTarget(root, args.slice(1).join(" ").trim());
+      console.log(target.id);
+      return;
+    }
+    case "recent": {
+      const limit = Number.parseInt(args[1] ?? "", 10);
+      console.log(renderRecentStates(root, Number.isFinite(limit) && limit > 0 ? limit : 8));
+      return;
+    }
+    case "aliases": {
+      const subcommand = (args[1] ?? "").trim().toLowerCase();
+      if (subcommand === "add") {
+        const name = args[2] ?? "";
+        const query = args.slice(3).join(" ").trim();
+        if (name.trim().length === 0 || query.length === 0) {
+          throw new Error("Usage: jjk aliases add <name> <query>");
+        }
+        setAlias(root, name, query);
+        recordWorkspaceSnapshot(root, `aliases:add:${name}`);
+        console.log(`alias added: ${name} -> ${query}`);
+        return;
+      }
+      if (subcommand === "remove" || subcommand === "rm" || subcommand === "delete") {
+        const name = args[2] ?? "";
+        if (name.trim().length === 0) {
+          throw new Error("Usage: jjk aliases remove <name>");
+        }
+        removeAlias(root, name);
+        recordWorkspaceSnapshot(root, `aliases:remove:${name}`);
+        console.log(`alias removed: ${name}`);
+        return;
+      }
+      const aliases = Object.entries(listAliases(root));
+      if (aliases.length === 0) {
+        console.log("No aliases recorded yet.");
+        return;
+      }
+      console.log(aliases.map(([name, query]) => `${name} -> ${query}`).join("\n"));
+      return;
+    }
+    case "default-branch": {
+      const input = args.slice(1).join(" ").trim();
+      if (input.length === 0) {
+        console.log(renderConfigView(root));
+        return;
+      }
+      const normalized = normalizeBranchName(input);
+      setDefaultBranch(root, normalized);
+      recordWorkspaceSnapshot(root, `default-branch:${normalized}`);
+      console.log(`default branch set to ${normalized}`);
+      return;
+    }
+    case "config": {
+      console.log(renderConfigView(root));
+      return;
+    }
+    case "open": {
+      const target = resolveMarkerTarget(root, args.slice(1).join(" ").trim());
+      console.log(openStateFiles(root, target));
+      return;
+    }
+    case "checkpoint": {
+      await handleSave(
+        root,
+        buildSaveRequest("save", args.slice(1).join(" ").trim() || "checkpoint"),
+        {
+          allowMainBranchSave: true,
+          continuationBranch: null,
+          suppressReturnBranchFork: true,
+        },
+      );
+      return;
+    }
+    case "autosave": {
+      const subcommand = (args[1] ?? "").trim().toLowerCase();
+      if (subcommand !== "now") {
+        throw new Error("Usage: jjk autosave now");
+      }
+      if (!hasDirtyWorktree(root)) {
+        console.log("worktree clean; nothing to autosave.");
+        return;
+      }
+      await handleSave(
+        root,
+        buildSaveRequest("auto", args.slice(2).join(" ").trim() || "autosave now"),
+        {
+          allowMainBranchSave: true,
+          continuationBranch: null,
+          suppressReturnBranchFork: true,
+        },
+      );
+      return;
+    }
+    case "lock": {
+      const input = args.slice(1).join(" ").trim();
+      if (input.length === 0) {
+        throw new Error("Usage: jjk lock <branch>");
+      }
+      const branch = normalizeBranchName(input);
+      setBranchLock(root, branch, true);
+      recordWorkspaceSnapshot(root, `lock:${branch}`);
+      console.log(`locked ${branch}`);
+      return;
+    }
+    case "unlock": {
+      const input = args.slice(1).join(" ").trim();
+      if (input.length === 0) {
+        throw new Error("Usage: jjk unlock <branch>");
+      }
+      const branch = normalizeBranchName(input);
+      setBranchLock(root, branch, false);
+      recordWorkspaceSnapshot(root, `unlock:${branch}`);
+      console.log(`unlocked ${branch}`);
+      return;
+    }
+    case "clean": {
+      const aliases = listAliases(root);
+      const repo = loadRepo(root);
+      const cleanedAliases = Object.entries(aliases).filter(([, query]) => {
+        try {
+          resolveState(root, query);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      repo.settings.aliases = Object.fromEntries(cleanedAliases);
+      saveRepo(root, repo);
+      recordWorkspaceSnapshot(root, "clean");
+      console.log(`cleaned ${Object.keys(aliases).length - cleanedAliases.length} stale aliases`);
+      return;
+    }
+    case "gc": {
+      const history = loadRepo(root).currentStateHistory;
+      if (!history) {
+        console.log("nothing to gc.");
+        return;
+      }
+      recordWorkspaceSnapshot(root, "gc");
+      console.log("gc completed");
       return;
     }
     case "branch": {

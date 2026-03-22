@@ -20,6 +20,12 @@ export interface StateMetadata {
   message?: string;
   base?: string;
   cherry?: string;
+  note?: string;
+  status?: string;
+  assignee?: string;
+  handoff?: string;
+  publishedAt?: string;
+  quarantinedAt?: string;
   stashFromBranch?: string;
   stashFromStateId?: string;
   deletedAt?: string;
@@ -93,6 +99,9 @@ export interface RepoSettings {
   watchDebounceMs: number;
   autoStatePrefix: string;
   showWorkspaceSnapshotsInGit?: boolean;
+  defaultBranch?: string | null;
+  aliases?: Record<string, string>;
+  lockedBranches?: string[];
 }
 
 export interface ReturnContext {
