@@ -66,7 +66,13 @@ describe("help output", () => {
     expect(slash).toBe(base);
     expect(long).toBe(base);
     expect(dash).toBe(base);
-    expect(base).toContain("jjk graph [--deleted]");
+    expect(base).toContain("jjk inspect <state>");
+    expect(base).toContain("jjk search <query>");
+    expect(base).toContain("jjk timeline");
+    expect(base).toContain("jjk graph [--deleted] [--branch <branch>]");
+    expect(base).toContain("jjk see [--deleted] [--kind <kind>] [--tag <tag>] [--since <time>]");
+    expect(base).toContain("jjk favorites");
+    expect(base).toContain("jjk compare-branch <a> <b>");
     expect(base).toContain("jjk shell-init [zsh|bash]");
     expect(base).toContain("Examples:");
     expect(base).toContain("Basic:");

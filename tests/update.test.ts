@@ -84,7 +84,7 @@ describe("update branch", () => {
 
     const graph = renderGraph(repo, { currentStateId: purple!.id });
     const table = renderStateTable(repo.states, { currentStateId: purple!.id, repo });
-    expect(graph).toContain(`*^ ${shortStateId(purple!.id)} [new] purple (jjk/purple)`);
+    expect(graph).toContain(`└─ *^   ${shortStateId(purple!.id)} [new] purple (jjk/purple)`);
     expect(graph).toContain(
       `${shortStateId(repo.states.find((state) => state.description === "fast_purple")?.id ?? "")} [new] fast_purple (jjk/fast_purple)`,
     );

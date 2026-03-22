@@ -37,6 +37,7 @@ import {
   renderLanes,
   renderMap,
   renderStateChoiceTable,
+  renderStateInspection,
   renderStateSummary,
   renderStatus,
   renderStateTable,
@@ -85,10 +86,13 @@ import {
   continuationBranchName,
   formatRelativePath,
   isDeletedState,
+  findStateMatches,
   nowIso,
   parseStateLabelAndMessage,
   shortStateId,
   stateDisplayBranch,
+  stateHasStar,
+  stateHasTag,
 } from "./utils";
 import { JJK_VERSION } from "./version";
 import { runWatch } from "./watch";
@@ -114,8 +118,12 @@ States:
   jjk thumbsup [state]
   jjk thumbsdown [state]
   jjk stash [description]
-  jjk see [--deleted]
-  jjk graph [--deleted]
+  jjk inspect <state>
+  jjk search <query>
+  jjk timeline
+  jjk see [--deleted] [--kind <kind>] [--tag <tag>] [--since <time>]
+  jjk graph [--deleted] [--branch <branch>]
+  jjk favorites
   jjk show [state]
   jjk story
   jjk diff [--atomic] [state] [state]
@@ -126,6 +134,7 @@ States:
   jjk redo
   jjk pick <state>
   jjk promote <state> <nice|star>
+  jjk compare-branch <a> <b>
   jjk backup [label]
   jjk load <backupfile>
   jjk return <state>
@@ -162,6 +171,7 @@ Examples:
     jjk save "main checkpoint"
     jjk see
     jjk graph
+    jjk timeline
 
   Branching:
     jjk green
@@ -173,11 +183,15 @@ Examples:
     jjk star
     jjk thumbsup purple
     jjk thumbsdown fast_orange
+    jjk favorites
 
   Compare and inspect:
+    jjk inspect purple
+    jjk search purple
     jjk show purple
     jjk diff purple orange
     jjk diff --atomic purple fast_purple
+    jjk compare-branch jjk/green jjk/orange
     jjk git log
 
   Recovery:
@@ -196,6 +210,10 @@ Examples:
     jjk fork --worktree
     jjk worktree purple
     jjk checkout jjk/purple
+    jjk graph --branch jjk/purple
+    jjk see --kind new
+    jjk see --tag star
+    jjk see --since 2026-03-22T00:00:00Z
 
   Shell integration:
     eval "$(jjk shell-init zsh)"
@@ -256,6 +274,108 @@ function buildSaveRequest(kind: SaveStateRequest["kind"], input: string): SaveSt
     kind,
     ...parseStateLabelAndMessage(input),
   };
+}
+
+interface StateViewFilters {
+  includeDeleted: boolean;
+  kind?: string;
+  tag?: string;
+  since?: number;
+  branch?: string;
+}
+
+function parseStateViewFilters(
+  args: string[],
+  options?: {
+    allowBranch?: boolean;
+  },
+): StateViewFilters {
+  const filters: StateViewFilters = {
+    includeDeleted: false,
+  };
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--deleted") {
+      filters.includeDeleted = true;
+      continue;
+    }
+    if (arg === "--kind") {
+      const value = args[++index];
+      if (!value) {
+        throw new Error("Usage: flag `--kind` requires a value.");
+      }
+      filters.kind = value.trim();
+      continue;
+    }
+    if (arg === "--tag") {
+      const value = args[++index];
+      if (!value) {
+        throw new Error("Usage: flag `--tag` requires a value.");
+      }
+      filters.tag = value.trim();
+      continue;
+    }
+    if (arg === "--since") {
+      const value = args[++index];
+      if (!value) {
+        throw new Error("Usage: flag `--since` requires a value.");
+      }
+      const timestamp = Date.parse(value);
+      if (Number.isNaN(timestamp)) {
+        throw new Error(`Invalid date value for --since: ${value}`);
+      }
+      filters.since = timestamp;
+      continue;
+    }
+    if (options?.allowBranch && arg === "--branch") {
+      const value = args[++index];
+      if (!value) {
+        throw new Error("Usage: flag `--branch` requires a value.");
+      }
+      filters.branch = value.trim();
+      continue;
+    }
+
+    throw new Error(`Unknown flag: ${arg}`);
+  }
+
+  return filters;
+}
+
+function filterStatesForView(states: StateRecord[], filters: StateViewFilters): StateRecord[] {
+  return states.filter((state) => {
+    if (!filters.includeDeleted && isDeletedState(state)) {
+      return false;
+    }
+    if (filters.kind && state.kind !== filters.kind) {
+      return false;
+    }
+    if (filters.tag) {
+      if (filters.tag === "star") {
+        if (!stateHasStar(state)) {
+          return false;
+        }
+      } else if (!stateHasTag(state, filters.tag)) {
+        return false;
+      }
+    }
+    if (filters.since !== undefined && new Date(state.createdAt).getTime() < filters.since) {
+      return false;
+    }
+    if (filters.branch) {
+      const branch = stateDisplayBranch(state);
+      if (branch !== filters.branch && state.branch !== filters.branch && state.lane !== filters.branch) {
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
+function resolveBranchQuery(root: string, query: string): string {
+  const resolvedLane = resolveLane(root, query);
+  return resolvedLane?.branch ?? normalizeBranchName(query);
 }
 
 function shouldColorizeOutput(): boolean {
@@ -1111,37 +1231,129 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
         },
       );
       return;
+    case "inspect": {
+      const query = args.slice(1).join(" ").trim();
+      if (query.length === 0) {
+        throw new Error("Usage: jjk inspect <state>");
+      }
+
+      const repo = loadRepo(root);
+      const state = resolveState(root, query, { includeDeleted: true });
+      console.log(renderStateInspection(repo, state));
+      return;
+    }
+    case "search": {
+      const query = args.slice(1).join(" ").trim();
+      if (query.length === 0) {
+        throw new Error("Usage: jjk search <query>");
+      }
+
+      const repo = loadRepo(root);
+      const matches = findStateMatches(repo.states, query);
+      if (matches.length === 0) {
+        console.log(`No states matched \`${query}\`.`);
+        return;
+      }
+
+      console.log(`Search results for \`${query}\`:`);
+      console.log(renderStateChoiceTable(matches.map((match) => match.state), { colorize: shouldColorizeOutput() }));
+      return;
+    }
     case "see": {
+      const filters = parseStateViewFilters(args.slice(1));
       const repo = loadRepo(root);
       const colorize = shouldColorizeOutput();
-      const includeDeleted = args.includes("--deleted");
+      const visibleStates = filterStatesForView(
+        listStates(root, { includeDeleted: filters.includeDeleted }),
+        filters,
+      );
+      if (visibleStates.length === 0) {
+        console.log("No states matched the selected filters.");
+        return;
+      }
+
+      const filteredRepo = { ...repo, states: visibleStates };
       const currentState = resolveCurrentState(root, repo.states);
-      console.log(renderGraph(repo, {
-        currentStateId: currentState?.id ?? null,
+      const currentStateId = currentState && visibleStates.some((state) => state.id === currentState.id)
+        ? currentState.id
+        : null;
+      console.log(renderGraph(filteredRepo, {
+        currentStateId,
         colorize,
-        includeDeleted,
+        includeDeleted: filters.includeDeleted,
       }));
       console.log("");
       console.log(
-        renderStateTable(listStates(root, { includeDeleted }), {
+        renderStateTable(visibleStates, {
           colorize,
-          currentStateId: currentState?.id ?? null,
-          repo,
-          includeDeleted,
+          currentStateId,
+          repo: filteredRepo,
+          includeDeleted: filters.includeDeleted,
         }),
       );
       return;
     }
     case "graph": {
+      const filters = parseStateViewFilters(args.slice(1), { allowBranch: true });
       const repo = loadRepo(root);
       const colorize = shouldColorizeOutput();
-      const includeDeleted = args.includes("--deleted");
+      if (filters.branch) {
+        filters.branch = resolveBranchQuery(root, filters.branch);
+      }
+      const visibleStates = filterStatesForView(
+        listStates(root, { includeDeleted: filters.includeDeleted }),
+        filters,
+      );
+      if (visibleStates.length === 0) {
+        console.log("No states matched the selected filters.");
+        return;
+      }
+
+      const filteredRepo = { ...repo, states: visibleStates };
       const currentState = resolveCurrentState(root, repo.states);
-      console.log(renderLogGraph(repo, {
-        currentStateId: currentState?.id ?? null,
+      const currentStateId = currentState && visibleStates.some((state) => state.id === currentState.id)
+        ? currentState.id
+        : null;
+      console.log(renderLogGraph(filteredRepo, {
+        currentStateId,
         colorize,
-        includeDeleted,
+        includeDeleted: filters.includeDeleted,
       }));
+      return;
+    }
+    case "timeline": {
+      const repo = loadRepo(root);
+      const colorize = shouldColorizeOutput();
+      const currentState = resolveCurrentState(root, repo.states);
+      const states = listStates(root);
+      console.log(
+        renderStateTable(states, {
+          colorize,
+          currentStateId: currentState?.id ?? null,
+          repo,
+        }),
+      );
+      return;
+    }
+    case "favorites": {
+      const repo = loadRepo(root);
+      const colorize = shouldColorizeOutput();
+      const states = listStates(root).filter((state) => stateHasStar(state));
+      if (states.length === 0) {
+        console.log("No starred states yet.");
+        return;
+      }
+      const currentState = resolveCurrentState(root, repo.states);
+      const currentStateId = currentState && states.some((state) => state.id === currentState.id)
+        ? currentState.id
+        : null;
+      console.log(
+        renderStateTable(states, {
+          colorize,
+          currentStateId,
+          repo,
+        }),
+      );
       return;
     }
     case "show": {
@@ -1311,6 +1523,27 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
           root,
           ["diff", stateA.commit, stateB.commit],
           "No diff between the selected states.",
+        ),
+      );
+      return;
+    }
+    case "compare-branch": {
+      const branchA = args[1] ?? "";
+      const branchB = args[2] ?? "";
+      if (branchA.trim().length === 0 || branchB.trim().length === 0) {
+        throw new Error("Usage: jjk compare-branch <a> <b>");
+      }
+
+      const stateA = resolveLatestStateForBranch(root, branchA);
+      const stateB = resolveLatestStateForBranch(root, branchB);
+      console.log(`branch a: ${renderStateSummary(stateA)}`);
+      console.log(`branch b: ${renderStateSummary(stateB)}`);
+      console.log("");
+      console.log(
+        runGitTextCommand(
+          root,
+          ["diff", stateA.commit, stateB.commit],
+          "No diff between the selected branch tips.",
         ),
       );
       return;
