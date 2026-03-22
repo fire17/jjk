@@ -172,6 +172,175 @@ describe("renderGraph", () => {
     expect(graph).toContain("green333");
   });
 
+  test("uses a diverse set of stable branch colors", () => {
+    const repo: RepoData = {
+      version: 1,
+      safeSpaceId: "safe1234",
+      createdAt: "2026-03-22T00:00:00.000Z",
+      updatedAt: "2026-03-22T00:00:00.000Z",
+      settings: {
+        watchDebounceMs: 1200,
+        autoStatePrefix: "auto",
+      },
+      states: [
+        {
+          id: "main1111",
+          kind: "save",
+          label: "main",
+          description: "main",
+          createdAt: "2026-03-22T00:00:00.000Z",
+          branch: "main",
+          lane: "main",
+          commit: "aaaa",
+          parentCommit: null,
+          parentStateId: null,
+          tags: [],
+          stats: { changedFiles: 1 },
+        },
+        {
+          id: "alpha111",
+          kind: "save",
+          label: "alpha",
+          description: "alpha",
+          createdAt: "2026-03-22T00:01:00.000Z",
+          branch: "jjk/alpha-spectrum",
+          continuationBranch: "jjk/alpha-spectrum",
+          lane: "alpha",
+          commit: "bbbb",
+          parentCommit: "aaaa",
+          parentStateId: "main1111",
+          tags: [],
+          stats: { changedFiles: 1 },
+        },
+        {
+          id: "beta2222",
+          kind: "save",
+          label: "beta",
+          description: "beta",
+          createdAt: "2026-03-22T00:02:00.000Z",
+          branch: "jjk/beta-spectrum",
+          continuationBranch: "jjk/beta-spectrum",
+          lane: "beta",
+          commit: "cccc",
+          parentCommit: "bbbb",
+          parentStateId: "alpha111",
+          tags: [],
+          stats: { changedFiles: 1 },
+        },
+        {
+          id: "gamma333",
+          kind: "save",
+          label: "gamma",
+          description: "gamma",
+          createdAt: "2026-03-22T00:03:00.000Z",
+          branch: "jjk/gamma-spectrum",
+          continuationBranch: "jjk/gamma-spectrum",
+          lane: "gamma",
+          commit: "dddd",
+          parentCommit: "cccc",
+          parentStateId: "beta2222",
+          tags: [],
+          stats: { changedFiles: 1 },
+        },
+        {
+          id: "delta444",
+          kind: "save",
+          label: "delta",
+          description: "delta",
+          createdAt: "2026-03-22T00:04:00.000Z",
+          branch: "jjk/delta-spectrum",
+          continuationBranch: "jjk/delta-spectrum",
+          lane: "delta",
+          commit: "eeee",
+          parentCommit: "dddd",
+          parentStateId: "gamma333",
+          tags: [],
+          stats: { changedFiles: 1 },
+        },
+        {
+          id: "omega555",
+          kind: "save",
+          label: "omega",
+          description: "omega",
+          createdAt: "2026-03-22T00:05:00.000Z",
+          branch: "jjk/omega-spectrum",
+          continuationBranch: "jjk/omega-spectrum",
+          lane: "omega",
+          commit: "ffff",
+          parentCommit: "eeee",
+          parentStateId: "delta444",
+          tags: [],
+          stats: { changedFiles: 1 },
+        },
+      ],
+      lanes: {
+        main: {
+          name: "main",
+          branch: "main",
+          baseRef: "main",
+          createdAt: "2026-03-22T00:00:00.000Z",
+          updatedAt: "2026-03-22T00:00:00.000Z",
+          currentStateId: "main1111",
+        },
+        alpha: {
+          name: "alpha",
+          branch: "jjk/alpha-spectrum",
+          baseRef: "main",
+          createdAt: "2026-03-22T00:01:00.000Z",
+          updatedAt: "2026-03-22T00:01:00.000Z",
+          currentStateId: "alpha111",
+        },
+        beta: {
+          name: "beta",
+          branch: "jjk/beta-spectrum",
+          baseRef: "main",
+          createdAt: "2026-03-22T00:02:00.000Z",
+          updatedAt: "2026-03-22T00:02:00.000Z",
+          currentStateId: "beta2222",
+        },
+        gamma: {
+          name: "gamma",
+          branch: "jjk/gamma-spectrum",
+          baseRef: "main",
+          createdAt: "2026-03-22T00:03:00.000Z",
+          updatedAt: "2026-03-22T00:03:00.000Z",
+          currentStateId: "gamma333",
+        },
+        delta: {
+          name: "delta",
+          branch: "jjk/delta-spectrum",
+          baseRef: "main",
+          createdAt: "2026-03-22T00:04:00.000Z",
+          updatedAt: "2026-03-22T00:04:00.000Z",
+          currentStateId: "delta444",
+        },
+        omega: {
+          name: "omega",
+          branch: "jjk/omega-spectrum",
+          baseRef: "main",
+          createdAt: "2026-03-22T00:05:00.000Z",
+          updatedAt: "2026-03-22T00:05:00.000Z",
+          currentStateId: "omega555",
+        },
+      },
+      branchLaneMap: {
+        main: "main",
+        "jjk/alpha-spectrum": "alpha",
+        "jjk/beta-spectrum": "beta",
+        "jjk/gamma-spectrum": "gamma",
+        "jjk/delta-spectrum": "delta",
+        "jjk/omega-spectrum": "omega",
+      },
+      timeshifts: [],
+      freezes: [],
+    };
+
+    const table = renderStateTable(repo.states, { colorize: true });
+    const colors = Array.from(table.matchAll(/\u001b\[38;5;(\d+)m/g), (match) => match[1]);
+
+    expect(new Set(colors).size).toBeGreaterThanOrEqual(5);
+  });
+
   test("renders state choices as an aligned table", () => {
     const repo: RepoData = {
       version: 1,
@@ -245,5 +414,46 @@ describe("renderGraph", () => {
     expect(output).toContain("1   ff698b81");
     expect(output).toContain("2   6ef57e58");
     expect(output).toContain("jjk/purple");
+  });
+
+  test("can colorize state choices for fuzzy return selection", () => {
+    const states: RepoData["states"] = [
+      {
+        id: "ff698b81",
+        kind: "save",
+        label: "purple",
+        description: "purple",
+        createdAt: "2026-03-22T05:16:00.000Z",
+        branch: "jjk/purple",
+        continuationBranch: "jjk/purple",
+        lane: "main",
+        commit: "aaaa",
+        parentCommit: null,
+        parentStateId: null,
+        tags: [],
+        stats: { changedFiles: 1 },
+      },
+      {
+        id: "6ef57e58",
+        kind: "save",
+        label: "orange",
+        description: "orange",
+        createdAt: "2026-03-22T05:17:00.000Z",
+        branch: "jjk/orange",
+        continuationBranch: "jjk/orange",
+        lane: "main",
+        commit: "bbbb",
+        parentCommit: "aaaa",
+        parentStateId: "ff698b81",
+        tags: [],
+        stats: { changedFiles: 1 },
+      },
+    ];
+
+    const output = renderStateChoiceTable(states, { colorize: true });
+
+    expect(output).toContain("\u001b[38;5;");
+    expect(output).toContain("\u001b[0m");
+    expect(output).not.toContain("\u001b[48;");
   });
 });

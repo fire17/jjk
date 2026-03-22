@@ -3,7 +3,12 @@ import type { AheadBehindStatus, WorktreeStatus } from "./git";
 import { formatDate, pad, stateDisplayBranch } from "./utils";
 
 const ANSI_RESET = "\u001b[0m";
-const BRANCH_COLOR_PALETTE = [39, 42, 45, 69, 111, 150, 178, 208, 214];
+const BRANCH_COLOR_PALETTE = [
+  31, 32, 33, 37, 38, 39, 43, 44, 45, 68,
+  69, 74, 75, 80, 81, 104, 105, 110, 111, 136,
+  142, 143, 149, 150, 172, 173, 174, 179, 180, 181,
+  203, 204, 205, 206, 207, 208, 209, 214, 215, 221,
+];
 
 export function renderStateSummary(state: StateRecord): string {
   return renderStateSummaryWithOptions(state);
@@ -30,7 +35,12 @@ export function renderStateSummaryWithOptions(
   return parts.join(" ");
 }
 
-export function renderStateChoiceTable(states: StateRecord[]): string {
+export function renderStateChoiceTable(
+  states: StateRecord[],
+  options?: {
+    colorize?: boolean;
+  },
+): string {
   if (states.length === 0) {
     return "";
   }
@@ -50,8 +60,15 @@ export function renderStateChoiceTable(states: StateRecord[]): string {
   ];
 
   states.forEach((state, index) => {
+    const line = `${pad(String(index + 1), indexWidth)}${separator}${pad(state.id, idWidth)}${separator}${pad(state.kind, kindWidth)}${separator}${pad(truncate(state.label, 40), labelWidth)}${separator}${pad(truncate(stateDisplayBranch(state), 24), branchWidth)}${separator}${formatDate(state.createdAt)}`;
     lines.push(
-      `${pad(String(index + 1), indexWidth)}${separator}${pad(state.id, idWidth)}${separator}${pad(state.kind, kindWidth)}${separator}${pad(truncate(state.label, 40), labelWidth)}${separator}${pad(truncate(stateDisplayBranch(state), 24), branchWidth)}${separator}${formatDate(state.createdAt)}`,
+      colorizeBranchLine(
+        line,
+        stateDisplayBranch(state),
+        options?.colorize === true,
+        true,
+        false,
+      ),
     );
   });
 
@@ -181,16 +198,28 @@ function branchAnsiColor(branch: string): number {
     return 111;
   }
 
-  let hash = 0;
+  let hash = 2166136261;
   for (let index = 0; index < branch.length; index += 1) {
-    hash = (hash * 31 + branch.charCodeAt(index)) >>> 0;
+    hash ^= branch.charCodeAt(index);
+    hash = Math.imul(hash, 16777619) >>> 0;
   }
 
-  return BRANCH_COLOR_PALETTE[hash % BRANCH_COLOR_PALETTE.length] ?? 111;
+  const mixed = scrambleHash(hash ^ 0x9e3779b9);
+  return BRANCH_COLOR_PALETTE[mixed % BRANCH_COLOR_PALETTE.length] ?? 111;
 }
 
 function truncate(value: string, length: number): string {
   return value.length > length ? `${value.slice(0, length - 3)}...` : value;
+}
+
+function scrambleHash(value: number): number {
+  let hash = value >>> 0;
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 0x7feb352d) >>> 0;
+  hash ^= hash >>> 15;
+  hash = Math.imul(hash, 0x846ca68b) >>> 0;
+  hash ^= hash >>> 16;
+  return hash >>> 0;
 }
 
 export function renderStory(states: StateRecord[]): string {

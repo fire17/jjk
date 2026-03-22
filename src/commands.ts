@@ -100,7 +100,7 @@ Shell:
 async function promptForState(states: StateRecord[]): Promise<StateRecord> {
   const rl = createInterface({ input: stdin, output: stdout });
   console.log("Multiple states matched:");
-  console.log(renderStateChoiceTable(states));
+  console.log(renderStateChoiceTable(states, { colorize: shouldColorizeOutput() }));
   const answer = await rl.question("Select a state number: ");
   rl.close();
   const index = Number.parseInt(answer, 10) - 1;
