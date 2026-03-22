@@ -27,6 +27,7 @@ import {
   renderGraph,
   renderLanes,
   renderMap,
+  renderStateChoiceTable,
   renderStateSummary,
   renderStatus,
   renderStateTable,
@@ -99,9 +100,7 @@ Shell:
 async function promptForState(states: StateRecord[]): Promise<StateRecord> {
   const rl = createInterface({ input: stdin, output: stdout });
   console.log("Multiple states matched:");
-  states.forEach((state, index) => {
-    console.log(`${index + 1}. ${renderStateSummary(state)}`);
-  });
+  console.log(renderStateChoiceTable(states));
   const answer = await rl.question("Select a state number: ");
   rl.close();
   const index = Number.parseInt(answer, 10) - 1;
@@ -175,8 +174,7 @@ async function handleReturn(root: string, query: string): Promise<void> {
         candidate.id,
         candidate.label,
         candidate.description,
-        candidate.branch,
-        candidate.lane,
+        stateDisplayBranch(candidate),
       ]
         .join(" ")
         .toLowerCase();
@@ -224,14 +222,20 @@ async function handleReturn(root: string, query: string): Promise<void> {
     return;
   }
 
-  if (state.continuationBranch && isTipStateOnBranch(root, state.id, state.branch)) {
+  const returnBranch = state.continuationBranch ?? state.branch;
+
+  if (state.continuationBranch && isTipStateOnBranch(root, state.id, returnBranch)) {
     createOrSwitchBranch(root, state.continuationBranch, state.commit, {
       force: true,
       reset: true,
     });
     const repoData = loadRepo(root);
     repoData.allowMainBranchSave = false;
-    repoData.returnContext = null;
+    repoData.returnContext = {
+      stateId: state.id,
+      sourceBranch: returnBranch,
+      sourceLane: returnBranch,
+    };
     saveRepo(root, repoData);
     importIntoJj(root);
     console.log(`returned to ${state.id} on ${stateDisplayBranch(state)}`);
@@ -245,7 +249,7 @@ async function handleReturn(root: string, query: string): Promise<void> {
   repoData.allowMainBranchSave = false;
   repoData.returnContext = {
     stateId: state.id,
-    sourceBranch: state.branch,
+    sourceBranch: returnBranch,
     sourceLane: state.lane,
   };
   saveRepo(root, repoData);
@@ -309,7 +313,12 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
         })();
       console.log(renderGraph(repo, { currentStateId: currentState?.id ?? null, colorize }));
       console.log("");
-      console.log(renderStateTable(listStates(root), { colorize }));
+      console.log(
+        renderStateTable(listStates(root), {
+          colorize,
+          currentStateId: currentState?.id ?? null,
+        }),
+      );
       return;
     }
     case "story":

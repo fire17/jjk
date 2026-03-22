@@ -111,8 +111,7 @@ export function findStateMatches(
         state.kind,
         state.label,
         state.description,
-        state.branch,
-        state.lane,
+        stateDisplayBranch(state),
       ].join(" ");
       const score = fuzzyScore(query, corpus);
       return { state, score };

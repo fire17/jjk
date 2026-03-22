@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { renderGraph, renderStateTable } from "../src/render";
+import { renderGraph, renderStateChoiceTable, renderStateTable } from "../src/render";
 import type { RepoData } from "../src/types";
 
 describe("renderGraph", () => {
@@ -158,7 +158,7 @@ describe("renderGraph", () => {
     };
 
     const graph = renderGraph(repo, { currentStateId: "green333", colorize: true });
-    const table = renderStateTable(repo.states, { colorize: true });
+    const table = renderStateTable(repo.states, { colorize: true, currentStateId: "green333" });
 
     expect(graph).toContain("\u001b[38;5;");
     expect(table).toContain("\u001b[38;5;");
@@ -166,7 +166,84 @@ describe("renderGraph", () => {
     expect(table).toContain("\u001b[0m");
     expect(graph).toContain("\u001b[2m");
     expect(table).toContain("\u001b[2m");
+    expect(graph).toContain("\u001b[1m");
+    expect(table).toContain("\u001b[1m");
     expect(graph).toContain("green222");
     expect(graph).toContain("green333");
+  });
+
+  test("renders state choices as an aligned table", () => {
+    const repo: RepoData = {
+      version: 1,
+      safeSpaceId: "safe1234",
+      createdAt: "2026-03-22T00:00:00.000Z",
+      updatedAt: "2026-03-22T00:00:00.000Z",
+      settings: {
+        watchDebounceMs: 1200,
+        autoStatePrefix: "auto",
+      },
+      states: [
+        {
+          id: "ff698b81",
+          kind: "save",
+          label: "purple",
+          description: "purple",
+          createdAt: "2026-03-22T05:16:00.000Z",
+          branch: "jjk/purple",
+          continuationBranch: "jjk/purple",
+          lane: "main",
+          commit: "aaaa",
+          parentCommit: null,
+          parentStateId: null,
+          tags: [],
+          stats: { changedFiles: 1 },
+        },
+        {
+          id: "6ef57e58",
+          kind: "save",
+          label: "fast_purple",
+          description: "fast_purple",
+          createdAt: "2026-03-22T05:16:00.000Z",
+          branch: "jjk/purple",
+          continuationBranch: "jjk/purple",
+          lane: "jjk/purple",
+          commit: "bbbb",
+          parentCommit: "aaaa",
+          parentStateId: "ff698b81",
+          tags: [],
+          stats: { changedFiles: 1 },
+        },
+      ],
+      lanes: {
+        main: {
+          name: "main",
+          branch: "main",
+          baseRef: "main",
+          createdAt: "2026-03-22T00:00:00.000Z",
+          updatedAt: "2026-03-22T00:00:00.000Z",
+          currentStateId: null,
+        },
+        purple: {
+          name: "jjk/purple",
+          branch: "jjk/purple",
+          baseRef: "main",
+          createdAt: "2026-03-22T05:16:00.000Z",
+          updatedAt: "2026-03-22T05:16:00.000Z",
+          currentStateId: "6ef57e58",
+        },
+      },
+      branchLaneMap: {
+        main: "main",
+        "jjk/purple": "purple",
+      },
+      timeshifts: [],
+      freezes: [],
+    };
+
+    const output = renderStateChoiceTable(repo.states);
+    expect(output).toContain("#   id");
+    expect(output).toContain("1   ff698b81");
+    expect(output).toContain("2   6ef57e58");
+    expect(output).toContain("jjk/purple");
   });
 });

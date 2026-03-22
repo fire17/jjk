@@ -204,10 +204,23 @@ export function saveState(
   const repo = loadRepo(root);
   const description = ensureDescription(request.kind, request.description);
   const label = request.label ?? defaultLabel(request.kind, description);
+  const returnedState = repo.returnContext?.stateId
+    ? repo.states.find((state) => state.id === repo.returnContext?.stateId) ?? null
+    : null;
+  const returnedStateHasChildren = returnedState
+    ? repo.states.some((state) => state.parentStateId === returnedState.id)
+    : false;
 
   if (repo.returnContext && request.kind !== "auto") {
     const currentBranch = getCurrentBranchName(root);
-    if (currentBranch === null) {
+    if (
+      currentBranch &&
+      returnedState?.continuationBranch === currentBranch &&
+      returnedStateHasChildren
+    ) {
+      const branchName = continuationBranchName(description);
+      createOrSwitchBranch(root, branchName, getHeadCommit(root) ?? undefined);
+    } else if (currentBranch === null) {
       const branchName = continuationBranchName(description);
       createOrSwitchBranch(root, branchName, getHeadCommit(root) ?? undefined);
     }
@@ -319,6 +332,10 @@ export function saveState(
 
 export function isTipStateOnBranch(root: string, stateId: string, branch: string): boolean {
   const repo = loadRepo(root);
+  const laneName = repo.branchLaneMap[branch];
+  if (laneName && repo.lanes[laneName]?.currentStateId === stateId) {
+    return true;
+  }
   return getLatestStateOnBranch(repo, branch)?.id === stateId;
 }
 

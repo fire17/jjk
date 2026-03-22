@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCli } from "../src/commands";
 import { createLane, initSafeSpace, loadRepo, saveState } from "../src/store";
+import { findStateMatches } from "../src/utils";
 import { run } from "../src/shell";
 
 describe("return flow", () => {
@@ -33,7 +34,7 @@ describe("return flow", () => {
 
     expect(currentBranch).toBe("jjk/anchor_before_lane_split");
     expect(repo.branchLaneMap[`jjk/return-${state.id}`]).toBeUndefined();
-    expect(repo.returnContext).toBeNull();
+    expect(repo.returnContext?.stateId).toBe(state.id);
     expect(repo.states).toHaveLength(stateCountBeforeReturn);
   });
 
@@ -54,6 +55,22 @@ describe("return flow", () => {
     expect(run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], { cwd }).stdout).toBe("main");
     expect(saved.branch).toBe("main");
     expect(run(["git", "rev-parse", "--verify", "main"], { cwd }).stdout).toBe(saved.commit);
+  });
+
+  test("return to a continuation-branch tip switches to that branch instead of detaching", async () => {
+    Bun.write(join(cwd, "notes.txt"), "green\n");
+    const green = saveState(cwd, {
+      kind: "save",
+      description: "green",
+    }).state;
+
+    await runCli(["return", "green"], cwd);
+
+    expect(run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], { cwd }).stdout).toBe(
+      "jjk/green",
+    );
+    expect(loadRepo(cwd).returnContext?.stateId).toBe(green.id);
+    expect(green.continuationBranch).toBe("jjk/green");
   });
 
   test("return auto-saves only when unstaged or untracked work would be lost", async () => {
@@ -95,11 +112,10 @@ describe("return flow", () => {
 
     await runCli(["return", baseline.id], cwd);
 
-    const detached = run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], {
+    const branchBeforeSave = run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], {
       cwd,
-      allowFailure: true,
-    });
-    expect(detached.exitCode).not.toBe(0);
+    }).stdout;
+    expect(branchBeforeSave).toBe("jjk/green");
     expect(loadRepo(cwd).returnContext?.stateId).toBe(baseline.id);
 
     Bun.write(join(cwd, "notes.txt"), "alpha\norange=true\n");
@@ -117,5 +133,21 @@ describe("return flow", () => {
     expect(orange.parentStateId).toBe(baseline.id);
     expect(purple.continuationBranch).toBe("jjk/purple");
     expect(loadRepo(cwd).returnContext).toBeNull();
+  });
+
+  test("return matching does not use lane names", () => {
+    saveState(cwd, {
+      kind: "save",
+      description: "green",
+    });
+    saveState(cwd, {
+      kind: "save",
+      description: "purple",
+    });
+
+    const repo = loadRepo(cwd);
+    const matches = findStateMatches(repo.states, "main");
+
+    expect(matches.map((match) => match.state.description)).toEqual(["main"]);
   });
 });

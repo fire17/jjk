@@ -6,14 +6,56 @@ const ANSI_RESET = "\u001b[0m";
 const BRANCH_COLOR_PALETTE = [39, 42, 45, 69, 111, 150, 178, 208, 214];
 
 export function renderStateSummary(state: StateRecord): string {
-  return [
+  return renderStateSummaryWithOptions(state);
+}
+
+export function renderStateSummaryWithOptions(
+  state: StateRecord,
+  options?: {
+    includeLane?: boolean;
+  },
+): string {
+  const parts = [
     `${state.id}`,
     `[${state.kind}]`,
     state.label,
-    `lane=${state.lane}`,
     `branch=${stateDisplayBranch(state)}`,
     formatDate(state.createdAt),
-  ].join(" ");
+  ];
+
+  if (options?.includeLane !== false) {
+    parts.splice(3, 0, `lane=${state.lane}`);
+  }
+
+  return parts.join(" ");
+}
+
+export function renderStateChoiceTable(states: StateRecord[]): string {
+  if (states.length === 0) {
+    return "";
+  }
+
+  const separator = "  ";
+  const indexWidth = Math.max(2, String(states.length).length);
+  const idWidth = Math.max(10, ...states.map((state) => state.id.length));
+  const kindWidth = Math.max(6, ...states.map((state) => state.kind.length));
+  const labelWidth = Math.max(18, ...states.map((state) => Math.min(state.label.length, 40)));
+  const branchWidth = Math.max(
+    20,
+    ...states.map((state) => Math.min(stateDisplayBranch(state).length, 24)),
+  );
+
+  const lines = [
+    `${pad("#", indexWidth)}${separator}${pad("id", idWidth)}${separator}${pad("kind", kindWidth)}${separator}${pad("label", labelWidth)}${separator}${pad("branch", branchWidth)}${separator}date`,
+  ];
+
+  states.forEach((state, index) => {
+    lines.push(
+      `${pad(String(index + 1), indexWidth)}${separator}${pad(state.id, idWidth)}${separator}${pad(state.kind, kindWidth)}${separator}${pad(truncate(state.label, 40), labelWidth)}${separator}${pad(truncate(stateDisplayBranch(state), 24), branchWidth)}${separator}${formatDate(state.createdAt)}`,
+    );
+  });
+
+  return lines.join("\n");
 }
 
 export function renderGraph(
@@ -53,11 +95,18 @@ export function renderGraph(
       const isLast = index === nodes.length - 1;
       const connector = isLast ? "└─" : "├─";
       const currentMarker = state.id === options?.currentStateId ? "*" : " ";
+      const isCurrent = state.id === options?.currentStateId;
       const isLeaf = leafStateIds.has(state.id);
       const leafMarker = isLeaf ? "^" : " ";
       const line = `${prefix}${connector} ${currentMarker}${leafMarker} ${state.id} [${state.kind}] ${state.label} (${stateDisplayBranch(state)})`;
       lines.push(
-        colorizeBranchLine(line, stateDisplayBranch(state), options?.colorize === true, isLeaf),
+        colorizeBranchLine(
+          line,
+          stateDisplayBranch(state),
+          options?.colorize === true,
+          isLeaf,
+          isCurrent,
+        ),
       );
       walk(state.id, `${prefix}${isLast ? "   " : "│  "}`);
     });
@@ -75,6 +124,7 @@ export function renderStateTable(
   states: StateRecord[],
   options?: {
     colorize?: boolean;
+    currentStateId?: string | null;
   },
 ): string {
   if (states.length === 0) {
@@ -101,6 +151,7 @@ export function renderStateTable(
         stateDisplayBranch(state),
         options?.colorize === true,
         leafStateIds.has(state.id),
+        state.id === options?.currentStateId,
       ),
     );
   }
@@ -113,14 +164,16 @@ function colorizeBranchLine(
   branch: string,
   enabled: boolean,
   isLeaf: boolean,
+  isCurrent: boolean,
 ): string {
   if (!enabled) {
     return line;
   }
 
   const color = branchAnsiColor(branch);
-  const dim = isLeaf ? "" : "\u001b[2m";
-  return `${dim}\u001b[38;5;${color}m${line}${ANSI_RESET}`;
+  const dim = isLeaf || isCurrent ? "" : "\u001b[2m";
+  const bold = isCurrent ? "\u001b[1m" : "";
+  return `${bold}${dim}\u001b[38;5;${color}m${line}${ANSI_RESET}`;
 }
 
 function branchAnsiColor(branch: string): number {
@@ -134,6 +187,10 @@ function branchAnsiColor(branch: string): number {
   }
 
   return BRANCH_COLOR_PALETTE[hash % BRANCH_COLOR_PALETTE.length] ?? 111;
+}
+
+function truncate(value: string, length: number): string {
+  return value.length > length ? `${value.slice(0, length - 3)}...` : value;
 }
 
 export function renderStory(states: StateRecord[]): string {
