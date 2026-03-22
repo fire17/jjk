@@ -68,11 +68,11 @@ describe("branch organization", () => {
     const graph = renderGraph(repo, { currentStateId: fastOrange?.id ?? null });
     const table = renderStateTable(repo.states);
     const main = repo.states.find((state) => state.description === "main");
-    expect(graph).toContain(`└─  ^ ${main?.id} [save] main (main)`);
-    expect(graph).toContain(`└─  ^ ${green?.id} [new] green (jjk/green)`);
-    expect(graph).toContain(`├─  ^ ${purple?.id} [new] purple (jjk/purple)`);
-    expect(graph).toContain(`└─  ^ ${fastPurple?.id} [new] fast_purple (jjk/fast_purple)`);
-    expect(graph).toContain(`└─ *^ ${fastOrange?.id} [nice] fast_orange (jjk/orange)`);
+    expect(graph).toContain(`└─  ^   ${main?.id} [save] main (main)`);
+    expect(graph).toContain(`└─  ^   ${green?.id} [new] green (jjk/green)`);
+    expect(graph).toContain(`├─  ^   ${purple?.id} [new] purple (jjk/purple)`);
+    expect(graph).toContain(`└─  ^   ${fastPurple?.id} [new] fast_purple (jjk/fast_purple)`);
+    expect(graph).toContain(`└─ *^   ${fastOrange?.id} [nice] fast_orange (jjk/orange)`);
     expect(table).toContain("jjk/purple");
     expect(table).toContain("jjk/orange");
   });

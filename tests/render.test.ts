@@ -74,11 +74,83 @@ describe("renderGraph", () => {
     };
 
     const output = renderGraph(repo, { currentStateId: "leaf2222" });
-    expect(output).toContain("* current state    ^ branch leaf");
-    expect(output).toContain("└─  ^ root1111 [save] baseline (main)");
+    expect(output).toContain("★ starred    * current state    ^ branch leaf");
+    expect(output).toContain("└─  ^   root1111 [save] baseline (main)");
     expect(output).toContain(
-      "└─ *^ leaf2222 [step] feature step (jjk/lane/feature) | parser rewrite in progress",
+      "└─ *^   leaf2222 [step] feature step (jjk/lane/feature) | parser rewrite in progress",
     );
+  });
+
+  test("renders star markers immediately before state ids in the graph", () => {
+    const repo: RepoData = {
+      version: 1,
+      safeSpaceId: "safe1234",
+      createdAt: "2026-03-22T00:00:00.000Z",
+      updatedAt: "2026-03-22T00:00:00.000Z",
+      settings: {
+        watchDebounceMs: 1200,
+        autoStatePrefix: "auto",
+      },
+      states: [
+        {
+          id: "root1111",
+          kind: "save",
+          label: "baseline",
+          description: "baseline",
+          createdAt: "2026-03-22T00:00:00.000Z",
+          branch: "main",
+          lane: "main",
+          commit: "aaaa",
+          parentCommit: null,
+          parentStateId: null,
+          tags: [],
+          stats: { changedFiles: 1 },
+        },
+        {
+          id: "star2222",
+          kind: "save",
+          label: "important branch point",
+          description: "important branch point",
+          createdAt: "2026-03-22T00:01:00.000Z",
+          branch: "jjk/starred",
+          continuationBranch: "jjk/starred",
+          lane: "starred",
+          commit: "bbbb",
+          parentCommit: "aaaa",
+          parentStateId: "root1111",
+          tags: ["star"],
+          stats: { changedFiles: 1 },
+        },
+      ],
+      lanes: {
+        main: {
+          name: "main",
+          branch: "main",
+          baseRef: "main",
+          createdAt: "2026-03-22T00:00:00.000Z",
+          updatedAt: "2026-03-22T00:00:00.000Z",
+          currentStateId: "root1111",
+        },
+        starred: {
+          name: "starred",
+          branch: "jjk/starred",
+          baseRef: "main",
+          createdAt: "2026-03-22T00:01:00.000Z",
+          updatedAt: "2026-03-22T00:01:00.000Z",
+          currentStateId: "star2222",
+        },
+      },
+      branchLaneMap: {
+        main: "main",
+        "jjk/starred": "starred",
+      },
+      timeshifts: [],
+      freezes: [],
+    };
+
+    const output = renderGraph(repo, { currentStateId: "star2222" });
+    expect(output).toContain("└─ *^ ★ star2222 [save] important branch point (jjk/starred)");
+    expect(output).not.toContain("[save] ★ important branch point");
   });
 
   test("can colorize output by branch", () => {

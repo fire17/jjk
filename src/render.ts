@@ -79,9 +79,14 @@ function formatStateGraphLine(text: string, state: StateRecord): string {
   return `${text}${separator}${truncate(singleLine(message), maxMessageLength)}`;
 }
 
-function stateLabelWithMarkers(state: StateRecord): string {
+function stateLabelWithMarkers(
+  state: StateRecord,
+  options?: {
+    includeStar?: boolean;
+  },
+): string {
   const markers = [
-    stateHasStar(state) ? "★" : "",
+    options?.includeStar === false ? "" : stateHasStar(state) ? "★" : "",
     stateHasTag(state, "thumbsup") ? "👍" : "",
     stateHasTag(state, "thumbsdown") ? "👎" : "",
   ].filter(Boolean);
@@ -185,12 +190,13 @@ export function renderGraph(
     nodes.forEach((state, index) => {
       const isLast = index === nodes.length - 1;
       const connector = isLast ? "└─" : "├─";
+      const starMarker = stateHasStar(state) ? "★ " : "  ";
       const currentMarker = state.id === options?.currentStateId ? "*" : " ";
       const isCurrent = state.id === options?.currentStateId;
       const isLeaf = leafStateIds.has(state.id);
       const leafMarker = isLeaf ? "^" : " ";
       const line = formatStateGraphLine(
-        `${prefix}${connector} ${currentMarker}${leafMarker} ${shortStateId(state.id)} [${state.kind}] ${stateLabelWithMarkers(state)} (${stateDisplayBranch(state)})`,
+        `${prefix}${connector} ${currentMarker}${leafMarker} ${starMarker}${shortStateId(state.id)} [${state.kind}] ${stateLabelWithMarkers(state, { includeStar: false })} (${stateDisplayBranch(state)})`,
         state,
       );
       lines.push(
@@ -211,7 +217,7 @@ export function renderGraph(
     return "No states saved yet.";
   }
 
-  return ["* current state    ^ branch leaf", "", ...lines].join("\n");
+  return ["★ starred    * current state    ^ branch leaf", "", ...lines].join("\n");
 }
 
 export function renderLogGraph(
