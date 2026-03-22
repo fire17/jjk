@@ -47,6 +47,7 @@ import {
 import {
   createBackup,
   attachBranchToState,
+  branchFromState,
   createLane,
   createBranchAtState,
   deleteState,
@@ -59,11 +60,16 @@ import {
   listTimeshifts,
   loadBackup,
   loadRepo,
+  moveState,
+  noteState,
+  pinState,
   promoteState,
   recordWorkspaceSnapshot,
   redoWorkspaceSnapshot,
   recoverState,
   recordFreeze,
+  renameBranch,
+  renameState,
   rememberTimeshift,
   requireSafeSpace,
   resolveLane,
@@ -75,7 +81,9 @@ import {
   isTipStateOnBranch,
   starState,
   toggleStateTag,
+  splitState,
   unstarState,
+  unpinState,
   stashWorkspace,
   undoWorkspaceSnapshot,
   updateBranchTarget,
@@ -116,8 +124,11 @@ States:
   jjk nice [description]
   jjk star [state]
   jjk unstar [state]
+  jjk pin <state>
+  jjk unpin <state>
   jjk thumbsup [state]
   jjk thumbsdown [state]
+  jjk note <state>, <message>
   jjk stash [description]
   jjk inspect <state>
   jjk search <query>
@@ -137,6 +148,11 @@ States:
   jjk pick <state>
   jjk promote <state> <nice|star>
   jjk compare-branch <a> <b>
+  jjk move <state> <branch>
+  jjk split <state> <new-branch>
+  jjk branch-from <state> <label>
+  jjk rename-state <state> <new-label>
+  jjk rename-branch <old> <new>
   jjk backup [label]
   jjk load <backupfile>
   jjk return <state>
@@ -190,6 +206,10 @@ Examples:
     jjk return green
     jjk orange
     jjk continue
+    jjk branch-from purple review_lane
+    jjk move purple jjk/review_lane
+    jjk rename-state purple polished_purple
+    jjk rename-branch jjk/green jjk/green_experiment
 
   Review markers:
     jjk star
@@ -394,6 +414,20 @@ function filterStatesForView(states: StateRecord[], filters: StateViewFilters): 
 function resolveBranchQuery(root: string, query: string): string {
   const resolvedLane = resolveLane(root, query);
   return resolvedLane?.branch ?? normalizeBranchName(query);
+}
+
+function splitNoteArgs(input: string): { state: string; message: string } {
+  const separator = input.indexOf(",");
+  if (separator <= 0) {
+    throw new Error("Usage: jjk note <state>, <message>");
+  }
+
+  const state = input.slice(0, separator).trim();
+  const message = input.slice(separator + 1).trim();
+  if (!state || !message) {
+    throw new Error("Usage: jjk note <state>, <message>");
+  }
+  return { state, message };
 }
 
 function shouldColorizeOutput(): boolean {
@@ -1195,6 +1229,15 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       console.log(renderStateSummary(unstarred));
       return;
     }
+    case "pin":
+    case "unpin": {
+      const target = resolveMarkerTarget(root, args.slice(1).join(" ").trim());
+      const updated = command === "pin" ? pinState(root, target.id) : unpinState(root, target.id);
+      recordWorkspaceSnapshot(root, `${command}:${updated.id}`);
+      console.log(`${command === "pin" ? "pinned" : "unpinned"} ${shortStateId(updated.id)} ${updated.label}`);
+      console.log(renderStateSummary(updated));
+      return;
+    }
     case "thumbsup":
     case "thumbsdown": {
       const target = resolveMarkerTarget(root, args.slice(1).join(" ").trim());
@@ -1218,6 +1261,22 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       createBranchAtState(root, branch, currentState.id);
       recordWorkspaceSnapshot(root, `branch:${branch}`);
       console.log(`created branch ${branch} at ${shortStateId(currentState.id)} ${currentState.label}`);
+      return;
+    }
+    case "branch-from":
+    case "split": {
+      const rawArgs = args.slice(1);
+      if (rawArgs.length < 2) {
+        throw new Error(`Usage: jjk ${command} <state> <${command === "split" ? "new-branch" : "label"}>`);
+      }
+      const stateQuery = rawArgs.slice(0, -1).join(" ").trim();
+      const branch = normalizeBranchName(rawArgs.at(-1)!);
+      const state = resolveState(root, stateQuery);
+      const lane = command === "split"
+        ? splitState(root, state.id, branch)
+        : branchFromState(root, state.id, branch);
+      recordWorkspaceSnapshot(root, `${command}:${lane.branch}`);
+      console.log(`${command === "split" ? "split" : "branched"} ${shortStateId(state.id)} to ${lane.branch}`);
       return;
     }
     case "checkout": {
@@ -1314,6 +1373,15 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       recordWorkspaceSnapshot(root, `stash:${stashed.state.id}`);
       console.log(`stashed changes into ${stateDisplayBranch(stashed.state)}`);
       console.log(renderStateSummary(stashed.state));
+      return;
+    }
+    case "note": {
+      const parsed = splitNoteArgs(args.slice(1).join(" "));
+      const target = resolveState(root, parsed.state);
+      const noted = noteState(root, target.id, parsed.message);
+      recordWorkspaceSnapshot(root, `note:${noted.id}`);
+      console.log(`noted ${shortStateId(noted.id)} ${noted.label}`);
+      console.log(renderStateSummary(noted));
       return;
     }
     case "nice":
@@ -1476,6 +1544,20 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       const query = args.slice(1).join(" ").trim();
       const state = query.length > 0 ? resolveState(root, query) : resolveDefaultState(root);
       console.log(renderAtomicStateDiff(root, state));
+      return;
+    }
+    case "move": {
+      const rawArgs = args.slice(1);
+      if (rawArgs.length < 2) {
+        throw new Error("Usage: jjk move <state> <branch>");
+      }
+      const stateQuery = rawArgs.slice(0, -1).join(" ").trim();
+      const branch = normalizeBranchName(rawArgs.at(-1)!);
+      const state = resolveState(root, stateQuery);
+      const moved = moveState(root, state.id, branch);
+      recordWorkspaceSnapshot(root, `move:${moved.id}`);
+      console.log(`moved ${shortStateId(moved.id)} to ${branch}`);
+      console.log(renderStateSummary(moved));
       return;
     }
     case "git": {
@@ -1886,6 +1968,32 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       syncCurrentStateHistory(root, resolveCurrentState(root, loadRepo(root).states)?.id ?? null);
       recordWorkspaceSnapshot(root, `update:${updated.branch}`);
       console.log(`updated ${updated.branch} to ${targetLabel}`);
+      return;
+    }
+    case "rename-branch": {
+      const rawArgs = args.slice(1);
+      if (rawArgs.length < 2) {
+        throw new Error("Usage: jjk rename-branch <old> <new>");
+      }
+      const oldBranchQuery = rawArgs.slice(0, -1).join(" ").trim();
+      const newBranch = normalizeBranchName(rawArgs.at(-1)!);
+      const renamed = renameBranch(root, oldBranchQuery, newBranch);
+      recordWorkspaceSnapshot(root, `rename-branch:${renamed.branch}`);
+      console.log(`renamed branch to ${renamed.branch}`);
+      return;
+    }
+    case "rename-state": {
+      const rawArgs = args.slice(1);
+      if (rawArgs.length < 2) {
+        throw new Error("Usage: jjk rename-state <state> <new-label>");
+      }
+      const stateQuery = rawArgs.slice(0, -1).join(" ").trim();
+      const nextLabel = rawArgs.at(-1)!;
+      const state = resolveState(root, stateQuery);
+      const renamed = renameState(root, state.id, nextLabel);
+      recordWorkspaceSnapshot(root, `rename-state:${renamed.id}`);
+      console.log(`renamed ${shortStateId(renamed.id)} to ${renamed.label}`);
+      console.log(renderStateSummary(renamed));
       return;
     }
     case "watch": {

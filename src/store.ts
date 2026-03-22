@@ -1163,7 +1163,7 @@ export function updateBranchTarget(
   }
 
   const matchedState =
-    state ??
+    (state ? repo.states.find((entry) => entry.id === state.id) ?? null : null) ??
     findMostRecentStateForCommit(repo, commit, branch) ??
     null;
   const laneName = repo.branchLaneMap[branch];
@@ -1604,6 +1604,14 @@ export function unstarState(root: string, stateId: string): StateRecord {
   return setStateTag(root, stateId, "star", false);
 }
 
+export function pinState(root: string, stateId: string): StateRecord {
+  return setStateTag(root, stateId, "pin", true);
+}
+
+export function unpinState(root: string, stateId: string): StateRecord {
+  return setStateTag(root, stateId, "pin", false);
+}
+
 export function toggleStateTag(root: string, stateId: string, tag: string): StateRecord {
   const repo = loadRepo(root);
   const state = repo.states.find((entry) => entry.id === stateId);
@@ -1640,6 +1648,30 @@ function setStateTag(root: string, stateId: string, tag: string, enabled: boolea
     saveRepo(root, repo);
   }
 
+  return state;
+}
+
+export function noteState(root: string, stateId: string, message: string): StateRecord {
+  const repo = loadRepo(root);
+  const state = repo.states.find((entry) => entry.id === stateId);
+  if (!state) {
+    throw new Error(`No state matched \`${stateId}\`.`);
+  }
+  if (isDeletedState(state)) {
+    throw new Error(`Cannot add a note to deleted state \`${stateId}\`.`);
+  }
+
+  const trimmed = message.trim();
+  state.metadata = {
+    ...(state.metadata ?? {}),
+    gitCommit: stateGitCommit(state),
+    message: trimmed.length > 0 ? trimmed : undefined,
+  };
+  if (!state.metadata.message) {
+    delete state.metadata.message;
+  }
+  saveRepo(root, repo);
+  importIntoJj(root);
   return state;
 }
 
@@ -1683,4 +1715,143 @@ export function promoteState(
 
   saveRepo(root, repo);
   return promoted;
+}
+
+export function renameState(root: string, stateId: string, label: string): StateRecord {
+  const repo = loadRepo(root);
+  const state = repo.states.find((entry) => entry.id === stateId);
+  if (!state) {
+    throw new Error(`No state matched \`${stateId}\`.`);
+  }
+  if (isDeletedState(state)) {
+    throw new Error(`Cannot rename deleted state \`${stateId}\`.`);
+  }
+
+  const nextLabel = label.trim();
+  if (nextLabel.length === 0) {
+    throw new Error("Provide a new label.");
+  }
+
+  const previousLabel = state.label;
+  const previousDescription = state.description;
+  state.label = nextLabel.slice(0, 96);
+  state.description = nextLabel;
+  state.metadata = {
+    ...(state.metadata ?? {}),
+    gitCommit: stateGitCommit(state),
+    priorLabels: [
+      ...((state.metadata?.priorLabels ?? []).map((entry) => ({ ...entry }))),
+      {
+        label: previousLabel,
+        description: previousDescription,
+        updatedAt: nowIso(),
+      },
+    ],
+  };
+  saveRepo(root, repo);
+  importIntoJj(root);
+  return state;
+}
+
+export function moveState(root: string, stateId: string, branchQuery: string): StateRecord {
+  const moved = updateBranchTarget(root, branchQuery, stateId);
+  if (!moved.state) {
+    throw new Error(`Unable to move state \`${stateId}\`.`);
+  }
+  return moved.state;
+}
+
+export function branchFromState(root: string, stateId: string, branch: string): LaneRecord {
+  return createBranchAtState(root, branch, stateId);
+}
+
+export function splitState(root: string, stateId: string, branch: string): LaneRecord {
+  return createBranchAtState(root, branch, stateId);
+}
+
+export function renameBranch(root: string, oldBranchQuery: string, newBranch: string): {
+  branch: string;
+  lane: LaneRecord;
+} {
+  const repo = loadRepo(root);
+  const resolvedLane = resolveLane(root, oldBranchQuery);
+  const oldBranch = resolvedLane?.branch ?? oldBranchQuery.trim();
+  const nextBranch = newBranch.trim();
+
+  if (oldBranch.length === 0) {
+    throw new Error("Provide a branch to rename.");
+  }
+  if (nextBranch.length === 0) {
+    throw new Error("Provide a new branch name.");
+  }
+  if (oldBranch === nextBranch) {
+    const laneName = repo.branchLaneMap[oldBranch] ?? resolvedLane?.name ?? oldBranch;
+    const lane = repo.lanes[laneName];
+    if (!lane) {
+      throw new Error(`No branch matched \`${oldBranchQuery}\`.`);
+    }
+    return { branch: nextBranch, lane };
+  }
+  if (localBranchExists(root, nextBranch)) {
+    throw new Error(`Branch \`${nextBranch}\` already exists.`);
+  }
+
+  const laneName = repo.branchLaneMap[oldBranch] ?? resolvedLane?.name ?? oldBranch;
+  const lane = repo.lanes[laneName];
+  if (!lane) {
+    throw new Error(`No branch matched \`${oldBranchQuery}\`.`);
+  }
+
+  run(["git", "branch", "-m", oldBranch, nextBranch], { cwd: root });
+
+  const oldLaneName = lane.name;
+  const renamedLane: LaneRecord = {
+    ...lane,
+    name: nextBranch,
+    branch: nextBranch,
+    baseRef: lane.baseRef === oldBranch ? nextBranch : lane.baseRef,
+    updatedAt: nowIso(),
+  };
+
+  delete repo.lanes[oldLaneName];
+  repo.lanes[renamedLane.name] = renamedLane;
+  delete repo.branchLaneMap[oldBranch];
+  repo.branchLaneMap[nextBranch] = renamedLane.name;
+
+  for (const state of repo.states) {
+    const matchesBranch = state.branch === oldBranch;
+    const matchesLane = state.lane === oldLaneName;
+    const matchesContinuation = (state.continuationBranch ?? null) === oldBranch;
+    if (!matchesBranch && !matchesLane && !matchesContinuation) {
+      continue;
+    }
+
+    const previousContexts = [
+      ...((state.metadata?.priorContexts ?? []).map((entry) => ({ ...entry }))),
+      {
+        branch: state.branch,
+        lane: state.lane,
+        continuationBranch: state.continuationBranch ?? null,
+        updatedAt: nowIso(),
+      },
+    ];
+    state.metadata = {
+      ...(state.metadata ?? {}),
+      gitCommit: stateGitCommit(state),
+      priorContexts: previousContexts,
+    };
+    if (matchesBranch) {
+      state.branch = nextBranch;
+    }
+    if (matchesLane) {
+      state.lane = renamedLane.name;
+    }
+    if (matchesContinuation) {
+      state.continuationBranch = nextBranch;
+    }
+  }
+
+  saveRepo(root, repo);
+  importIntoJj(root);
+  return { branch: nextBranch, lane: renamedLane };
 }

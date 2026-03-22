@@ -31,6 +31,11 @@ export interface StateMetadata {
     parentStateId: string | null;
     wasLaneCurrent: boolean;
   };
+  priorLabels?: Array<{
+    label: string;
+    description: string;
+    updatedAt: string;
+  }>;
   priorContexts?: Array<{
     branch: string;
     lane: string;

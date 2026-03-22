@@ -144,6 +144,7 @@ function stateLabelWithMarkers(
     options?.includeStar === false ? "" : stateHasStar(state) ? "★" : "",
     stateHasTag(state, "thumbsup") ? "👍" : "",
     stateHasTag(state, "thumbsdown") ? "👎" : "",
+    stateHasTag(state, "pin") ? "📌" : "",
   ].filter(Boolean);
   const prefix = markers.length > 0 ? `${markers.join("")} ` : "";
   return `${prefix}${state.label}`;

@@ -74,6 +74,9 @@ describe("help output", () => {
     expect(base).toContain("jjk favorites");
     expect(base).toContain("jjk compare-branch <a> <b>");
     expect(base).toContain("jjk shell-init [zsh|bash]");
+    expect(base).toContain("jjk move <state> <branch>");
+    expect(base).toContain("jjk rename-branch <old> <new>");
+    expect(base).toContain("jjk branch-from <state> <label>");
     expect(base).toContain("Examples:");
     expect(base).toContain("Basic:");
     expect(base).toContain("Advanced flow:");
