@@ -5,6 +5,7 @@ import {
   createSnapshotCommit,
   deleteLocalBranch,
   deleteRef,
+  ensureGitIgnoreEntries,
   ensureLocalExcludes,
   getCurrentBranch,
   getCurrentBranchName,
@@ -443,6 +444,7 @@ export function initSafeSpace(startCwd: string): { root: string; repo: RepoData 
   const root = resolve(startCwd);
   initGitRepo(root);
   ensureLocalExcludes(root);
+  ensureGitIgnoreEntries(root, [".worktrees/", ".worktrees/*"]);
   initJjRepo(root);
   importIntoJj(root);
 

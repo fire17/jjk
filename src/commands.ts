@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import {
@@ -17,6 +17,7 @@ import {
   hasDirtyWorktree,
   hasRemote,
   importIntoJj,
+  isGitIgnored,
   isJjRepo,
   localBranchExists,
   pickStateChanges,
@@ -289,13 +290,13 @@ function uniqueBranchName(root: string, preferred: string): string {
 }
 
 function uniqueWorktreePath(root: string, branch: string): string {
-  const parent = dirname(root);
-  const repoName = basename(root);
-  const base = `${repoName}-${branchSegment(branch)}`;
-  let candidate = join(parent, base);
+  const worktreesRoot = join(root, ".worktrees");
+  mkdirSync(worktreesRoot, { recursive: true });
+  const base = branchSegment(branch);
+  let candidate = join(worktreesRoot, base);
   let suffix = 2;
   while (existsSync(candidate)) {
-    candidate = join(parent, `${base}-${suffix}`);
+    candidate = join(worktreesRoot, `${base}-${suffix}`);
     suffix += 1;
   }
   return candidate;
@@ -696,6 +697,10 @@ function scanForMapHits(start: string, maxDepth = 4): MapHit[] {
       }
 
       const next = join(current, entry);
+      const relativeNext = formatRelativePath(start, next);
+      if (isGitIgnored(start, relativeNext)) {
+        continue;
+      }
       try {
         if (statSync(next).isDirectory()) {
           walk(next, depth + 1);

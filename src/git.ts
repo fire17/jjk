@@ -394,6 +394,40 @@ export function ensureLocalExcludes(cwd: string): void {
   writeFileSync(excludePath, `${prefix}${additions.join("\n")}\n`);
 }
 
+export function ensureGitIgnoreEntries(cwd: string, entries: string[]): void {
+  const gitIgnorePath = join(cwd, ".gitignore");
+  const existing = existsSync(gitIgnorePath)
+    ? readFileSync(gitIgnorePath, "utf8")
+    : "";
+  const normalizedExisting = new Set(
+    existing
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean),
+  );
+  const additions = entries.filter((entry) => !normalizedExisting.has(entry));
+  if (additions.length === 0) {
+    return;
+  }
+  const prefix =
+    existing.length === 0
+      ? ""
+      : existing.endsWith("\n")
+        ? existing
+        : `${existing}\n`;
+  writeFileSync(gitIgnorePath, `${prefix}${additions.join("\n")}\n`);
+}
+
+export function isGitIgnored(cwd: string, path: string): boolean {
+  if (!isGitRepo(cwd)) {
+    return false;
+  }
+  return run(
+    ["git", "check-ignore", "-q", "--no-index", "--", path],
+    { cwd, allowFailure: true },
+  ).exitCode === 0;
+}
+
 export function createSnapshotCommit(
   cwd: string,
   message: string,
