@@ -78,6 +78,10 @@ export function exportFromJj(cwd: string): void {
 }
 
 export function getCurrentBranch(cwd: string): string {
+  return getCurrentBranchName(cwd) ?? "main";
+}
+
+export function getCurrentBranchName(cwd: string): string | null {
   const result = run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], {
     cwd,
     allowFailure: true,
@@ -87,7 +91,7 @@ export function getCurrentBranch(cwd: string): string {
     return result.stdout;
   }
 
-  return "main";
+  return null;
 }
 
 export function hasHead(cwd: string): boolean {
@@ -131,33 +135,15 @@ export function createSnapshotCommit(
   changedFiles: number;
 } {
   exportFromJj(cwd);
-
-  const tempDir = mkdtempSync(join(tmpdir(), "jjk-index-"));
-  const tempIndex = join(tempDir, "index");
-  const env = { GIT_INDEX_FILE: tempIndex };
-
-  try {
-    const parentCommit = getHeadCommit(cwd);
-    if (parentCommit) {
-      run(["git", "read-tree", parentCommit], { cwd, env });
-    }
-
-    run(["git", "add", "--all", "--", "."], { cwd, env });
-    const changedFiles = countStatusEntries(cwd, env);
-    const tree = run(["git", "write-tree"], { cwd, env }).stdout;
-    const commitArgs = ["git", "commit-tree", tree, "-m", message];
-    if (parentCommit) {
-      commitArgs.push("-p", parentCommit);
-    }
-
-    const commit = run(commitArgs, { cwd, env }).stdout;
-    return { commit, parentCommit, changedFiles };
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true });
-  }
+  const parentCommit = getHeadCommit(cwd);
+  run(["git", "add", "--all", "--", "."], { cwd });
+  const changedFiles = countStatusEntries(cwd);
+  run(["git", "commit", "--allow-empty", "-m", message], { cwd });
+  const commit = run(["git", "rev-parse", "--verify", "HEAD"], { cwd }).stdout;
+  return { commit, parentCommit, changedFiles };
 }
 
-function countStatusEntries(cwd: string, env: Record<string, string>): number {
+function countStatusEntries(cwd: string, env?: Record<string, string>): number {
   const result = run(["git", "status", "--short", "--untracked-files=all"], {
     cwd,
     env,
@@ -211,6 +197,20 @@ export function createOrSwitchBranch(
   run(["git", "switch", "-c", branch], { cwd });
 }
 
+export function switchToDetachedCommit(
+  cwd: string,
+  commit: string,
+  options?: {
+    discardChanges?: boolean;
+  },
+): void {
+  if (options?.discardChanges) {
+    run(["git", "checkout", "--detach", "-f", commit], { cwd });
+    return;
+  }
+  run(["git", "switch", "--detach", commit], { cwd });
+}
+
 export function listRefs(cwd: string, prefix: string): string[] {
   const result = run(["git", "for-each-ref", "--format=%(refname)", prefix], {
     cwd,
@@ -238,12 +238,14 @@ export function hasDirtyWorktree(cwd: string): boolean {
 }
 
 export function getWorktreeStatus(cwd: string): WorktreeStatus {
-  const result = run(["git", "status", "--porcelain", "--untracked-files=all"], {
+  const proc = Bun.spawnSync(["git", "status", "--porcelain", "--untracked-files=all"], {
     cwd,
-    allowFailure: true,
+    stdout: "pipe",
+    stderr: "pipe",
   });
+  const stdout = proc.stdout.toString();
 
-  if (result.stdout.length === 0) {
+  if (stdout.trim().length === 0) {
     return {
       dirty: false,
       changedFiles: 0,
@@ -256,7 +258,7 @@ export function getWorktreeStatus(cwd: string): WorktreeStatus {
   let staged = 0;
   let unstaged = 0;
   let untracked = 0;
-  const lines = result.stdout.split("\n").filter(Boolean);
+  const lines = stdout.split("\n").filter(Boolean);
 
   for (const line of lines) {
     const x = line[0];

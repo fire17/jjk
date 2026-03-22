@@ -52,7 +52,7 @@ chmod +x ./bin/jjk
 ### States
 
 - `jjk <description>`
-  - Save the current working tree as a hidden snapshot commit and remember it as a `save` state.
+  - Save the current working tree as a real Git commit and remember it as a `save` state.
 
 - `jjk step [description]`
   - Save a small meaningful checkpoint.

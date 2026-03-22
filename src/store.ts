@@ -5,6 +5,7 @@ import {
   createSnapshotCommit,
   ensureLocalExcludes,
   getCurrentBranch,
+  getCurrentBranchName,
   getHeadCommit,
   importIntoJj,
   initGitRepo,
@@ -23,6 +24,7 @@ import type {
   TimeshiftRecord,
 } from "./types";
 import {
+  branchSegment,
   defaultLabel,
   ensureDescription,
   findStateMatches,
@@ -100,6 +102,7 @@ export function initSafeSpace(startCwd: string): { root: string; repo: RepoData 
       states: [],
       lanes: {},
       branchLaneMap: {},
+      returnContext: null,
       timeshifts: [],
       freezes: [],
     };
@@ -141,11 +144,30 @@ export function ensureLane(
 
 export function saveState(root: string, request: SaveStateRequest): SaveStateResult {
   const repo = loadRepo(root);
-  const branch = getCurrentBranch(root);
-  const headCommit = getHeadCommit(root);
-  const lane = ensureLane(repo, branch, branch, branch);
   const description = ensureDescription(request.kind, request.description);
   const label = request.label ?? defaultLabel(request.kind, description);
+
+  if (repo.returnContext && request.kind !== "auto") {
+    const currentBranch = getCurrentBranchName(root);
+    if (currentBranch === null) {
+      const branchName = `jjk/${repo.returnContext.branchPrefix}/${branchSegment(description)}`;
+      createOrSwitchBranch(root, branchName, getHeadCommit(root) ?? undefined);
+    }
+    repo.returnContext = null;
+  }
+
+  const currentBranch = getCurrentBranchName(root);
+  const branch = currentBranch ?? repo.returnContext?.sourceBranch ?? getCurrentBranch(root);
+  const laneName =
+    currentBranch === null && repo.returnContext
+      ? repo.returnContext.sourceLane
+      : branch;
+  const baseRef =
+    currentBranch === null && repo.returnContext
+      ? repo.returnContext.sourceBranch
+      : branch;
+  const headCommit = getHeadCommit(root);
+  const lane = ensureLane(repo, branch, laneName, baseRef);
   const snapshot = createSnapshotCommit(
     root,
     `jjk ${request.kind}: ${description}`,

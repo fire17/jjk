@@ -59,6 +59,13 @@ export interface RepoSettings {
   autoStatePrefix: string;
 }
 
+export interface ReturnContext {
+  stateId: string;
+  sourceBranch: string;
+  sourceLane: string;
+  branchPrefix: string;
+}
+
 export interface RepoData {
   version: 1;
   safeSpaceId: string;
@@ -68,6 +75,7 @@ export interface RepoData {
   states: StateRecord[];
   lanes: Record<string, LaneRecord>;
   branchLaneMap: Record<string, string>;
+  returnContext?: ReturnContext | null;
   timeshifts: TimeshiftRecord[];
   freezes: FreezeRecord[];
 }

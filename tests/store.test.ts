@@ -23,6 +23,9 @@ describe("store", () => {
     });
 
     expect(result.state.description).toBe("baseline before parser rewrite");
+    expect(run(["git", "rev-parse", "--verify", "HEAD"], { cwd }).stdout).toBe(
+      result.state.commit,
+    );
     expect(listStates(cwd)).toHaveLength(1);
   });
 });

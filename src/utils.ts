@@ -19,6 +19,19 @@ export function slugify(value: string): string {
   return slug || "state";
 }
 
+export function branchSegment(value: string): string {
+  const segment = value
+    .trim()
+    .replace(/\s+/g, "_")
+    .replace(/\//g, "_")
+    .replace(/@{/g, "_")
+    .replace(/\.\./g, "_")
+    .replace(/[~^:?*\[\]\\]+/g, "_")
+    .replace(/^[-./_]+|[-./_]+$/g, "")
+    .replace(/_+/g, "_");
+  return segment || "state";
+}
+
 export function defaultLabel(kind: StateKind, description: string): string {
   const trimmed = description.trim();
   if (trimmed.length === 0) {

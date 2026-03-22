@@ -18,6 +18,7 @@ import {
   pickStateChanges,
   pullFastForward,
   pushCurrentBranchAndStateRefs,
+  switchToDetachedCommit,
 } from "./git";
 import {
   renderDoctor,
@@ -46,9 +47,10 @@ import {
   resolveState,
   resolveTimeshift,
   saveState,
+  saveRepo,
 } from "./store";
 import type { MapHit, SaveStateRequest, StateRecord } from "./types";
-import { formatRelativePath, nowIso } from "./utils";
+import { branchSegment, formatRelativePath, nowIso } from "./utils";
 import { JJK_VERSION } from "./version";
 import { runWatch } from "./watch";
 import { runRepl } from "./repl";
@@ -178,25 +180,32 @@ async function handleReturn(root: string, query: string): Promise<void> {
     }
   }
 
-  if (hasDirtyWorktree(root)) {
+  const worktree = getWorktreeStatus(root);
+  const headCommit = getHeadCommit(root);
+  let autoSaved = false;
+  if (worktree.unstaged > 0 || worktree.untracked > 0 || (!headCommit && worktree.dirty)) {
     const backToLabel = `back to ${state.id} ${state.description}`.trim();
     saveState(root, {
       kind: "auto",
       description: backToLabel,
       label: backToLabel,
     });
+    autoSaved = true;
   }
 
-  const branch = `jjk/return-${state.id}`;
-  createOrSwitchBranch(root, branch, state.commit, {
-    force: true,
-    reset: true,
+  switchToDetachedCommit(root, state.commit, {
+    discardChanges: autoSaved,
   });
   const repoData = loadRepo(root);
-  repoData.branchLaneMap[branch] = state.lane;
-  Bun.write(join(root, JJK_DIR, "repo.json"), `${JSON.stringify(repoData, null, 2)}\n`);
+  repoData.returnContext = {
+    stateId: state.id,
+    sourceBranch: state.branch,
+    sourceLane: state.lane,
+    branchPrefix: branchSegment(state.description),
+  };
+  saveRepo(root, repoData);
   importIntoJj(root);
-  console.log(`returned to ${state.id} on ${branch}`);
+  console.log(`returned to ${state.id}`);
 }
 
 export async function runCli(argv: string[], cwd: string): Promise<void> {

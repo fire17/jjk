@@ -45,11 +45,11 @@ Saving a state currently works like this:
 1. Use a temporary Git index so the working tree and real index remain untouched.
 2. Stage the project snapshot into that temporary index.
 3. Write a tree object.
-4. Create a commit object with the current `HEAD` as parent when available.
+4. Stage tracked and untracked changes, then create a real Git commit on the current branch.
 5. Update `refs/jjk/states/<id>`.
 6. Record the higher-level meaning in `.jjk/repo.json`.
 
-This gives hidden snapshots without rewriting the user’s visible branch on every save.
+This keeps each saved state aligned with a concrete Git commit instead of a hidden snapshot only.
 
 ## Return Semantics
 
