@@ -77,6 +77,10 @@ describe("help output", () => {
     expect(base).toContain("Examples:");
     expect(base).toContain("Basic:");
     expect(base).toContain("Advanced flow:");
+    expect(base).toContain("jjk where");
+    expect(base).toContain("jjk continue");
+    expect(base).toContain("jjk heads");
+    expect(base).toContain("jjk log <branch>");
   });
 
   test("graph command prints the log-style state graph", async () => {

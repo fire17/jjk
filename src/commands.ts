@@ -109,6 +109,7 @@ Safe spaces:
 
 States:
   jjk current
+  jjk where
   jjk <description>
   jjk save [description]
   jjk step [description]
@@ -127,6 +128,7 @@ States:
   jjk show [state]
   jjk story
   jjk diff [--atomic] [state] [state]
+  jjk log <branch>
   jjk git log
   jjk delete <state>
   jjk recover <deleted-state>
@@ -139,11 +141,19 @@ States:
   jjk load <backupfile>
   jjk return <state>
   jjk lastest <branch>
+  jjk continue
   jjk return -
   jjk back
   jjk forward
   jjk up
   jjk down
+  jjk prev
+  jjk next
+  jjk root <state>
+  jjk trail <state>
+  jjk children <state>
+  jjk parents <state>
+  jjk heads
   jjk update <branch> [state]
   jjk branch [name]
   jjk checkout <branch>
@@ -172,12 +182,14 @@ Examples:
     jjk see
     jjk graph
     jjk timeline
+    jjk where
 
   Branching:
     jjk green
     jjk purple
     jjk return green
     jjk orange
+    jjk continue
 
   Review markers:
     jjk star
@@ -192,6 +204,7 @@ Examples:
     jjk diff purple orange
     jjk diff --atomic purple fast_purple
     jjk compare-branch jjk/green jjk/orange
+    jjk log jjk/purple
     jjk git log
 
   Recovery:
@@ -214,6 +227,11 @@ Examples:
     jjk see --kind new
     jjk see --tag star
     jjk see --since 2026-03-22T00:00:00Z
+    jjk root purple
+    jjk trail purple
+    jjk children purple
+    jjk parents purple
+    jjk heads
 
   Shell integration:
     eval "$(jjk shell-init zsh)"
@@ -597,6 +615,72 @@ function resolveDefaultState(root: string): StateRecord {
     throw new Error("No state is available.");
   }
   return currentState;
+}
+
+function resolveBranchName(root: string, query: string): string {
+  const lane = resolveLane(root, query);
+  return lane?.branch ?? query.trim();
+}
+
+function collectStateTrail(root: string, state: StateRecord): StateRecord[] {
+  const repo = loadRepo(root);
+  const trail = [state];
+  let cursor = state;
+
+  while (cursor.parentStateId) {
+    const parent = repo.states.find(
+      (candidate) => candidate.id === cursor.parentStateId && !isDeletedState(candidate),
+    );
+    if (!parent) {
+      break;
+    }
+    trail.push(parent);
+    cursor = parent;
+  }
+
+  return trail.reverse();
+}
+
+function renderStateTrail(trail: StateRecord[]): string {
+  if (trail.length === 0) {
+    return "No states available.";
+  }
+
+  return trail
+    .map((state, index) => {
+      const indent = "  ".repeat(index);
+      const prefix = index === 0 ? "" : "└─ ";
+      return `${indent}${prefix}${renderStateSummary(state)}`;
+    })
+    .join("\n");
+}
+
+function renderStateList(states: StateRecord[]): string {
+  if (states.length === 0) {
+    return "No states available.";
+  }
+
+  return states.map((state) => renderStateSummary(state)).join("\n");
+}
+
+function renderBranchHeads(root: string): string {
+  const currentBranch = getCurrentBranchName(root);
+  const lines = listLanes(root).map((lane) => {
+    let head: StateRecord | null = null;
+    try {
+      head = resolveLatestStateForBranch(root, lane.branch);
+    } catch {
+      head = null;
+    }
+    const marker = lane.branch === currentBranch ? "*" : " ";
+    return `${marker} ${lane.branch}: ${head ? renderStateSummary(head) : "none"}`;
+  });
+
+  if (lines.length === 0) {
+    return "No heads available.";
+  }
+
+  return lines.join("\n");
 }
 
 function getAtomicBaseCommit(state: StateRecord): string {
@@ -1085,6 +1169,16 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
     case "step":
       await handleSave(root, buildSaveRequest(command, args.slice(1).join(" ")));
       return;
+    case "where": {
+      const currentState = resolveCurrentState(root, loadRepo(root).states);
+      if (!currentState) {
+        throw new Error("No current state is available.");
+      }
+      console.log(
+        `${shortStateId(currentState.id)} [${currentState.kind}] ${currentState.label} on ${stateDisplayBranch(currentState)} (workspace ${getCurrentBranchName(root) ?? "detached"})`,
+      );
+      return;
+    }
     case "star": {
       const target = resolveMarkerTarget(root, args.slice(1).join(" ").trim());
       const starred = starState(root, target.id);
@@ -1293,6 +1387,28 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       );
       return;
     }
+    case "log": {
+      const query = args.slice(1).join(" ").trim();
+      if (query.length === 0) {
+        throw new Error("Usage: jjk log <branch>");
+      }
+      const repo = loadRepo(root);
+      const branch = resolveBranchName(root, query);
+      const branchStates = repo.states.filter(
+        (state) => !isDeletedState(state) && stateDisplayBranch(state) === branch,
+      );
+      const branchRepo: RepoData = {
+        ...repo,
+        states: branchStates,
+      };
+      const currentState = branchStates[branchStates.length - 1] ?? null;
+      console.log(renderLogGraph(branchRepo, {
+        currentStateId: currentState?.id ?? null,
+        colorize: shouldColorizeOutput(),
+        includeDeleted: false,
+      }));
+      return;
+    }
     case "graph": {
       const filters = parseStateViewFilters(args.slice(1), { allowBranch: true });
       const repo = loadRepo(root);
@@ -1401,6 +1517,54 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
           historyLength: history.entries.length,
         }),
       );
+      return;
+    }
+    case "heads": {
+      console.log(renderBranchHeads(root));
+      return;
+    }
+    case "root": {
+      const query = args.slice(1).join(" ").trim();
+      if (query.length === 0) {
+        throw new Error("Usage: jjk root <state>");
+      }
+      const state = resolveState(root, query);
+      const trail = collectStateTrail(root, state);
+      console.log(renderStateSummary(trail[0] ?? state));
+      return;
+    }
+    case "trail": {
+      const query = args.slice(1).join(" ").trim();
+      if (query.length === 0) {
+        throw new Error("Usage: jjk trail <state>");
+      }
+      const state = resolveState(root, query);
+      console.log(renderStateTrail(collectStateTrail(root, state)));
+      return;
+    }
+    case "children": {
+      const query = args.slice(1).join(" ").trim();
+      if (query.length === 0) {
+        throw new Error("Usage: jjk children <state>");
+      }
+      const state = resolveState(root, query);
+      const children = listStates(root).filter(
+        (candidate) => candidate.parentStateId === state.id,
+      );
+      console.log(renderStateList(children));
+      return;
+    }
+    case "parents": {
+      const query = args.slice(1).join(" ").trim();
+      if (query.length === 0) {
+        throw new Error("Usage: jjk parents <state>");
+      }
+      const state = resolveState(root, query);
+      const repo = loadRepo(root);
+      const parent = state.parentStateId
+        ? repo.states.find((candidate) => candidate.id === state.parentStateId && !isDeletedState(candidate))
+        : null;
+      console.log(parent ? renderStateSummary(parent) : "No parent state is available.");
       return;
     }
     case "status": {
@@ -1620,6 +1784,23 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       await handleReturn(root, args.slice(1).join(" "));
       recordWorkspaceSnapshot(root, `return:${resolveCurrentState(root, loadRepo(root).states)?.id ?? "unknown"}`);
       return;
+    case "continue": {
+      const currentState = resolveCurrentState(root, loadRepo(root).states);
+      if (!currentState) {
+        throw new Error("No current state is available.");
+      }
+      const branch = stateDisplayBranch(currentState);
+      const latest = resolveLatestStateForBranch(root, branch);
+      if (stateDisplayBranch(latest) === "main") {
+        updateBranchTarget(root, "main", latest.id);
+        syncCurrentStateHistory(root, latest.id);
+        console.log(`continued to ${shortStateId(latest.id)} on main`);
+      } else {
+        console.log(activateState(root, latest, "continued"));
+      }
+      recordWorkspaceSnapshot(root, `continue:${latest.id}`);
+      return;
+    }
     case "lastest":
     case "latest": {
       const query = args.slice(1).join(" ").trim();
@@ -1668,6 +1849,23 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       const target = await resolveChildState(root);
       console.log(activateState(root, target, "down"));
       recordWorkspaceSnapshot(root, `down:${target.id}`);
+      return;
+    }
+    case "prev": {
+      const repo = loadRepo(root);
+      const currentState = resolveCurrentState(root, repo.states);
+      if (!currentState?.parentStateId) {
+        throw new Error("No parent state is available.");
+      }
+      const target = resolveState(root, currentState.parentStateId);
+      console.log(activateState(root, target, "prev"));
+      recordWorkspaceSnapshot(root, `prev:${target.id}`);
+      return;
+    }
+    case "next": {
+      const target = await resolveChildState(root);
+      console.log(activateState(root, target, "next"));
+      recordWorkspaceSnapshot(root, `next:${target.id}`);
       return;
     }
     case "update": {

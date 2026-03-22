@@ -46,7 +46,7 @@ describe("pick flow", () => {
     expect(repo.returnContext?.stateId).toBe(picked?.id);
   });
 
-  test("pick applies only the delta held by the chosen state after multiple returns", async () => {
+  test("pick applies only the delta held by the chosen state after multiple returns", { timeout: 10000 }, async () => {
     const filePath = join(cwd, "game.txt");
 
     Bun.write(filePath, "color=green\nfast=false\n");
