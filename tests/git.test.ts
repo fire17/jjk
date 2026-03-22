@@ -69,11 +69,11 @@ describe("git snapshotting", () => {
     expect(records.length).toBeGreaterThan(0);
     expect(records.every((record) => record.subject.length > 0)).toBe(true);
     expect(records.every((record) => record.body.length > 0)).toBe(true);
-    expect(records.some((record) => record.subject === "green [save] (jjk/green) - jjk")).toBe(
+    expect(records.some((record) => record.subject === "green [new] (jjk/green) - jjk")).toBe(
       true,
     );
     expect(
-      records.some((record) => record.subject === "fast_purple [save] (jjk/purple) - jjk"),
+      records.some((record) => record.subject === "fast_purple [new] (jjk/fast_purple) - jjk"),
     ).toBe(true);
 
     const snapshotRecords = records.filter((record) =>

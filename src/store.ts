@@ -7,6 +7,7 @@ import {
   getCurrentBranch,
   getCurrentBranchName,
   getHeadCommit,
+  hasDirtyWorktree,
   importIntoJj,
   initGitRepo,
   initJjRepo,
@@ -32,6 +33,8 @@ import {
   nowIso,
   shortId,
   slugify,
+  stateDisplayBranch,
+  stateGitCommit,
 } from "./utils";
 
 export const JJK_DIR = ".jjk";
@@ -66,8 +69,27 @@ export function repoFilePath(root: string): string {
   return join(root, JJK_DIR, REPO_FILE);
 }
 
+function normalizeStateRecord(state: StateRecord): StateRecord {
+  const gitCommit = state.metadata?.gitCommit ?? state.commit;
+  if (state.metadata?.gitCommit === gitCommit) {
+    return state;
+  }
+
+  return {
+    ...state,
+    metadata: {
+      ...(state.metadata ?? {}),
+      gitCommit,
+    },
+  };
+}
+
 export function loadRepo(root: string): RepoData {
-  return JSON.parse(readFileSync(repoFilePath(root), "utf8")) as RepoData;
+  const repo = JSON.parse(readFileSync(repoFilePath(root), "utf8")) as RepoData;
+  return {
+    ...repo,
+    states: repo.states.map((state) => normalizeStateRecord(state)),
+  };
 }
 
 export function saveRepo(root: string, repo: RepoData): void {
@@ -187,6 +209,49 @@ function buildStateCommitMessage(input: {
   return `${subject}\n\n${body}`;
 }
 
+function findMostRecentStateForCommit(
+  repo: RepoData,
+  commit: string,
+  branch?: string | null,
+): StateRecord | null {
+  for (let index = repo.states.length - 1; index >= 0; index -= 1) {
+    const state = repo.states[index];
+    if (!state || stateGitCommit(state) !== commit) {
+      continue;
+    }
+    if (!branch || stateDisplayBranch(state) === branch) {
+      return state;
+    }
+  }
+
+  for (let index = repo.states.length - 1; index >= 0; index -= 1) {
+    const state = repo.states[index];
+    if (state && stateGitCommit(state) === commit) {
+      return state;
+    }
+  }
+
+  return null;
+}
+
+function findLatestStateForLane(
+  repo: RepoData,
+  laneName: string,
+  branch: string,
+  excludeStateId?: string,
+): StateRecord | null {
+  for (let index = repo.states.length - 1; index >= 0; index -= 1) {
+    const state = repo.states[index];
+    if (!state || state.id === excludeStateId) {
+      continue;
+    }
+    if (state.lane === laneName || stateDisplayBranch(state) === branch) {
+      return state;
+    }
+  }
+  return null;
+}
+
 export function saveState(
   root: string,
   request: SaveStateRequest,
@@ -199,56 +264,69 @@ export function saveState(
     forceCurrentBranch?: string;
     allowMainBranchSave?: boolean;
     continuationBranch?: string | null;
+    suppressReturnBranchFork?: boolean;
   } = {},
 ): SaveStateResult {
   const repo = loadRepo(root);
+  const returnContext = repo.returnContext ?? null;
   const description = ensureDescription(request.kind, request.description);
   const label = request.label ?? defaultLabel(request.kind, description);
-  const returnedState = repo.returnContext?.stateId
-    ? repo.states.find((state) => state.id === repo.returnContext?.stateId) ?? null
+  const returnedState = returnContext?.stateId
+    ? repo.states.find((state) => state.id === returnContext.stateId) ?? null
     : null;
   const returnedStateHasChildren = returnedState
     ? repo.states.some((state) => state.parentStateId === returnedState.id)
     : false;
 
-  if (repo.returnContext && request.kind !== "auto") {
+  if (returnContext && request.kind !== "auto") {
     const currentBranch = getCurrentBranchName(root);
-    if (
-      currentBranch &&
-      returnedState?.continuationBranch === currentBranch &&
-      returnedStateHasChildren
-    ) {
-      const branchName = continuationBranchName(description);
-      createOrSwitchBranch(root, branchName, getHeadCommit(root) ?? undefined);
-    } else if (currentBranch === null) {
-      const branchName = continuationBranchName(description);
-      createOrSwitchBranch(root, branchName, getHeadCommit(root) ?? undefined);
+    if (!options.suppressReturnBranchFork) {
+      if (
+        currentBranch &&
+        returnedState?.continuationBranch === currentBranch &&
+        returnedStateHasChildren
+      ) {
+        const branchName = continuationBranchName(description);
+        createOrSwitchBranch(root, branchName, getHeadCommit(root) ?? undefined);
+      } else if (currentBranch === null) {
+        const branchName = continuationBranchName(description);
+        createOrSwitchBranch(root, branchName, getHeadCommit(root) ?? undefined);
+      }
     }
     repo.returnContext = null;
   }
 
   const currentBranch = options.forceCurrentBranch ?? getCurrentBranchName(root);
-  const activeBranch = currentBranch ?? repo.returnContext?.sourceBranch ?? getCurrentBranch(root);
+  const activeBranch = currentBranch ?? returnContext?.sourceBranch ?? getCurrentBranch(root);
   const saveOnMain =
     activeBranch === "main" &&
     (options.allowMainBranchSave ?? repo.allowMainBranchSave ?? false);
   const branch = activeBranch;
+  const continueDetachedSourceBranch = Boolean(
+    currentBranch === null &&
+    returnContext &&
+    options.suppressReturnBranchFork,
+  );
   const laneName =
-    currentBranch === null && repo.returnContext
-      ? repo.returnContext.sourceLane
+    currentBranch === null && returnContext
+      ? returnContext.sourceLane
       : branch;
   const baseRef =
-    currentBranch === null && repo.returnContext
-      ? repo.returnContext.sourceBranch
+    currentBranch === null && returnContext
+      ? returnContext.sourceBranch
       : branch;
   const headCommit = getHeadCommit(root);
   const commitTargetBranch =
-    branch === "main" && !saveOnMain
+    continueDetachedSourceBranch
+      ? branch
+      : branch === "main" && !saveOnMain
       ? continuationBranchName(description)
       : undefined;
   const lane = ensureLane(repo, branch, laneName, baseRef);
   const logicalParentState =
-    branch === "main" && !saveOnMain && lane.currentStateId
+    continueDetachedSourceBranch && lane.currentStateId
+      ? repo.states.find((state) => state.id === lane.currentStateId) ?? null
+      : branch === "main" && !saveOnMain && lane.currentStateId
       ? repo.states.find((state) => state.id === lane.currentStateId) ?? null
       : null;
   const continuationBranch =
@@ -258,7 +336,7 @@ export function saveState(
       ? null
       : branch.startsWith("jjk/")
         ? branch
-        : branch === "main"
+        : request.kind === "new" || branch === "main"
           ? continuationBranchName(description)
           : null;
   const commitMessage = buildStateCommitMessage({
@@ -280,9 +358,18 @@ export function saveState(
 
   const checkedOutStateId =
     headCommit
-      ? repo.states.find((state) => state.commit === headCommit)?.id ?? null
+      ? findMostRecentStateForCommit(
+          repo,
+          headCommit,
+          getCurrentBranchName(root) ?? undefined,
+        )?.id ?? null
+      : null;
+  const hierarchyParentStateId =
+    continueDetachedSourceBranch && returnedState
+      ? returnedState.id
       : null;
   const parentStateId =
+    hierarchyParentStateId ??
     logicalParentState?.id ??
     checkedOutStateId ??
     lane.currentStateId ??
@@ -305,6 +392,9 @@ export function saveState(
     stats: {
       changedFiles: snapshot.changedFiles,
     },
+    metadata: {
+      gitCommit: snapshot.commit,
+    },
   };
 
   repo.states.push(state);
@@ -319,6 +409,12 @@ export function saveState(
     continuationLane.updatedAt = state.createdAt;
     repo.branchLaneMap[continuationBranch] = continuationLane.name;
     updateRef(root, `refs/heads/${continuationBranch}`, state.commit);
+  }
+  if (continueDetachedSourceBranch) {
+    createOrSwitchBranch(root, branch, snapshot.commit, {
+      force: true,
+      reset: true,
+    });
   }
   if (commitTargetBranch && branch === "main") {
     restoreHeadWorktree(root);
@@ -372,6 +468,132 @@ export function listStates(root: string): StateRecord[] {
   return loadRepo(root).states.slice().sort((left, right) =>
     left.createdAt.localeCompare(right.createdAt),
   );
+}
+
+export function updateBranchTarget(
+  root: string,
+  branchQuery: string,
+  stateQuery?: string,
+): {
+  branch: string;
+  commit: string;
+  state: StateRecord | null;
+} {
+  const trimmedBranch = branchQuery.trim();
+  if (trimmedBranch.length === 0) {
+    throw new Error("Provide a branch to update.");
+  }
+
+  const repo = loadRepo(root);
+  const resolvedLane = resolveLane(root, trimmedBranch);
+  const branch = resolvedLane?.branch ?? trimmedBranch;
+  const state = stateQuery?.trim() ? resolveState(root, stateQuery) : null;
+  const commit = state ? stateGitCommit(state) : getHeadCommit(root);
+
+  if (!commit) {
+    throw new Error("No current Git commit is available to update the branch to.");
+  }
+
+  const currentBranch = getCurrentBranchName(root);
+  const currentHead = getHeadCommit(root);
+  const shouldCheckoutOrMove = currentBranch !== branch || currentHead !== commit;
+  if (shouldCheckoutOrMove) {
+    if (hasDirtyWorktree(root)) {
+      throw new Error(
+        `Cannot update \`${branch}\` while the worktree has uncommitted changes.`,
+      );
+    }
+    createOrSwitchBranch(root, branch, commit, {
+      force: true,
+      reset: true,
+    });
+  }
+
+  const matchedState =
+    state ??
+    findMostRecentStateForCommit(repo, commit, branch) ??
+    null;
+  const laneName = repo.branchLaneMap[branch];
+  let lane =
+    laneName && repo.lanes[laneName]
+      ? repo.lanes[laneName]
+      : branch.startsWith("jjk/")
+        ? ensureLane(
+            repo,
+            branch,
+            branch,
+            state ? stateDisplayBranch(state) : currentBranch ?? branch,
+          )
+        : null;
+  if (lane) {
+    lane.branch = branch;
+    lane.updatedAt = nowIso();
+    repo.branchLaneMap[branch] = lane.name;
+  }
+
+  let currentState = matchedState;
+  if (matchedState) {
+    if (!lane) {
+      lane = ensureLane(repo, branch, branch, currentBranch ?? branch);
+      lane.branch = branch;
+      lane.updatedAt = nowIso();
+      repo.branchLaneMap[branch] = lane.name;
+    }
+
+    const targetContinuationBranch = branch === "main" ? null : branch;
+    const needsContextRewrite =
+      matchedState.branch !== branch ||
+      matchedState.lane !== lane.name ||
+      (matchedState.continuationBranch ?? null) !== targetContinuationBranch;
+
+    if (needsContextRewrite) {
+      const previousContexts = [
+        ...((matchedState.metadata?.priorContexts ?? []).map((context) => ({ ...context }))),
+        {
+          branch: matchedState.branch,
+          lane: matchedState.lane,
+          continuationBranch: matchedState.continuationBranch ?? null,
+          updatedAt: nowIso(),
+        },
+      ];
+      matchedState.branch = branch;
+      matchedState.lane = lane.name;
+      matchedState.continuationBranch = targetContinuationBranch;
+      matchedState.metadata = {
+        ...(matchedState.metadata ?? {}),
+        gitCommit: stateGitCommit(matchedState),
+        priorContexts: previousContexts,
+      };
+
+      for (const candidateLane of Object.values(repo.lanes)) {
+        if (candidateLane.currentStateId !== matchedState.id || candidateLane.name === lane.name) {
+          continue;
+        }
+        const replacement = findLatestStateForLane(
+          repo,
+          candidateLane.name,
+          candidateLane.branch,
+          matchedState.id,
+        );
+        candidateLane.currentStateId = replacement?.id ?? null;
+        candidateLane.updatedAt = nowIso();
+      }
+    }
+  }
+
+  if (lane) {
+    lane.currentStateId = currentState?.id ?? null;
+    lane.updatedAt = nowIso();
+  }
+
+  saveRepo(root, repo);
+  importIntoJj(root);
+
+  return {
+    branch,
+    commit,
+    state: currentState,
+  };
 }
 
 export function createLane(root: string, name: string): LaneRecord {
@@ -513,6 +735,10 @@ export function promoteState(
     createdAt: nowIso(),
     parentStateId: source.id,
     tags: [...source.tags],
+    metadata: {
+      ...(source.metadata ?? {}),
+      gitCommit: source.metadata?.gitCommit ?? source.commit,
+    },
   };
 
   repo.states.push(promoted);

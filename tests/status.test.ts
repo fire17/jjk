@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { runCli } from "../src/commands";
 import { initSafeSpace, saveState } from "../src/store";
 import { run } from "../src/shell";
+import { shortStateId } from "../src/utils";
 
 describe("status command", () => {
   let cwd = "";
@@ -39,6 +40,6 @@ describe("status command", () => {
     const text = output.join("\n");
     expect(text).toContain("current lane: main");
     expect(text).toContain("worktree: dirty");
-    expect(text).toContain(`latest state: ${state.id} [step] baseline ready`);
+    expect(text).toContain(`latest state: ${shortStateId(state.id)} [step] baseline ready`);
   });
 });

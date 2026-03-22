@@ -23,8 +23,10 @@ describe("store", () => {
     });
 
     expect(result.state.description).toBe("baseline before parser rewrite");
+    expect(result.state.metadata?.gitCommit).toBe(result.state.commit);
     const states = listStates(cwd);
     expect(states[0]?.description).toBe("main");
+    expect(states[1]?.metadata?.gitCommit).toBe(states[1]?.commit);
     expect(states).toHaveLength(2);
   });
 

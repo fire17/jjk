@@ -43,6 +43,23 @@ export function stateDisplayBranch(state: {
   return state.continuationBranch ?? state.branch;
 }
 
+export function stateGitCommit(state: {
+  commit: string;
+  metadata?: {
+    gitCommit?: string;
+  };
+}): string {
+  return state.metadata?.gitCommit ?? state.commit;
+}
+
+export function shortCommit(commit: string, length = 12): string {
+  return commit.slice(0, length);
+}
+
+export function shortStateId(id: string, length = 8): string {
+  return id.slice(0, length);
+}
+
 export function defaultLabel(kind: StateKind, description: string): string {
   const trimmed = description.trim();
   if (trimmed.length === 0) {
@@ -127,6 +144,8 @@ export function ensureDescription(kind: StateKind, description: string): string 
   }
 
   switch (kind) {
+    case "new":
+      return "new branch state";
     case "step":
       return "small meaningful checkpoint";
     case "nice":

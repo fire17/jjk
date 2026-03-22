@@ -49,8 +49,8 @@ describe("branch organization", () => {
     expect(purple?.continuationBranch).toBe("jjk/purple");
     expect(orange?.branch).toBe("jjk/orange");
     expect(orange?.continuationBranch).toBe("jjk/orange");
-    expect(fastPurple?.branch).toBe("jjk/purple");
-    expect(fastPurple?.continuationBranch).toBe("jjk/purple");
+    expect(fastPurple?.branch).toBe("jjk/fast_purple");
+    expect(fastPurple?.continuationBranch).toBe("jjk/fast_purple");
     expect(fastOrange?.branch).toBe("jjk/orange");
     expect(fastOrange?.continuationBranch).toBe("jjk/orange");
     expect(purple?.parentStateId).toBe(green?.id);
@@ -69,9 +69,9 @@ describe("branch organization", () => {
     const table = renderStateTable(repo.states);
     const main = repo.states.find((state) => state.description === "main");
     expect(graph).toContain(`└─  ^ ${main?.id} [save] main (main)`);
-    expect(graph).toContain(`└─  ^ ${green?.id} [save] green (jjk/green)`);
-    expect(graph).toContain(`├─    ${purple?.id} [save] purple (jjk/purple)`);
-    expect(graph).toContain(`└─  ^ ${fastPurple?.id} [save] fast_purple (jjk/purple)`);
+    expect(graph).toContain(`└─  ^ ${green?.id} [new] green (jjk/green)`);
+    expect(graph).toContain(`├─  ^ ${purple?.id} [new] purple (jjk/purple)`);
+    expect(graph).toContain(`└─  ^ ${fastPurple?.id} [new] fast_purple (jjk/fast_purple)`);
     expect(graph).toContain(`└─ *^ ${fastOrange?.id} [nice] fast_orange (jjk/orange)`);
     expect(table).toContain("jjk/purple");
     expect(table).toContain("jjk/orange");

@@ -1,6 +1,7 @@
 import { watch } from "node:fs";
 import { relative } from "node:path";
 import { saveState } from "./store";
+import { shortStateId } from "./utils";
 
 function shouldIgnore(pathname: string): boolean {
   return (
@@ -38,7 +39,7 @@ export async function runWatch(root: string, debounceMs: number): Promise<void> 
         kind: "auto",
         description: `auto grouped change near ${lastPath}`,
       });
-      console.log(`saved ${result.state.id} ${result.state.label}`);
+      console.log(`saved ${shortStateId(result.state.id)} ${result.state.label}`);
     }, debounceMs);
   });
 

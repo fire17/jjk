@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { renderGraph, renderStateChoiceTable, renderStateTable } from "../src/render";
+import { renderGraph, renderStateChoiceTable, renderStateSummary, renderStateTable } from "../src/render";
 import type { RepoData } from "../src/types";
 
 describe("renderGraph", () => {
@@ -109,7 +109,7 @@ describe("renderGraph", () => {
           branch: "jjk/green",
           continuationBranch: "jjk/green",
           lane: "jjk/green",
-          commit: "bbbb",
+          commit: "bbbbbbbb1234",
           parentCommit: "aaaa",
           parentStateId: "main1111",
           tags: [],
@@ -124,8 +124,8 @@ describe("renderGraph", () => {
           branch: "jjk/green",
           continuationBranch: "jjk/green",
           lane: "jjk/green",
-          commit: "cccc",
-          parentCommit: "bbbb",
+          commit: "cccccccc5678",
+          parentCommit: "bbbbbbbb1234",
           parentStateId: "green222",
           tags: [],
           stats: { changedFiles: 1 },
@@ -170,6 +170,11 @@ describe("renderGraph", () => {
     expect(table).toContain("\u001b[1m");
     expect(graph).toContain("green222");
     expect(graph).toContain("green333");
+    expect(table).toContain("git");
+    expect(table).toContain("bbbbbbbb");
+    expect(table).toContain("cccccccc");
+    expect(table).not.toContain("bbbbbbbb1234");
+    expect(table).not.toContain("cccccccc5678");
   });
 
   test("uses a diverse set of stable branch colors", () => {
@@ -455,5 +460,30 @@ describe("renderGraph", () => {
     expect(output).toContain("\u001b[38;5;");
     expect(output).toContain("\u001b[0m");
     expect(output).not.toContain("\u001b[48;");
+  });
+
+  test("renders git ids in state summaries", () => {
+    const text = renderStateSummary({
+      id: "ff698b81120d",
+      kind: "save",
+      label: "purple",
+      description: "purple",
+      createdAt: "2026-03-22T05:16:00.000Z",
+      branch: "jjk/purple",
+      continuationBranch: "jjk/purple",
+      lane: "main",
+      commit: "1234567890abcdef1234567890abcdef12345678",
+      parentCommit: null,
+      parentStateId: null,
+      tags: [],
+      stats: { changedFiles: 1 },
+      metadata: {
+        gitCommit: "1234567890abcdef1234567890abcdef12345678",
+      },
+    });
+
+    expect(text).toContain("ff698b81");
+    expect(text).not.toContain("ff698b81120d");
+    expect(text).toContain("git=1234567890ab");
   });
 });

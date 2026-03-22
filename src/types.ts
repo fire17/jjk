@@ -1,4 +1,5 @@
 export type StateKind =
+  | "new"
   | "save"
   | "step"
   | "nice"
@@ -9,6 +10,16 @@ export interface SnapshotStats {
   changedFiles: number;
   insertedLines?: number;
   deletedLines?: number;
+}
+
+export interface StateMetadata {
+  gitCommit: string;
+  priorContexts?: Array<{
+    branch: string;
+    lane: string;
+    continuationBranch?: string | null;
+    updatedAt: string;
+  }>;
 }
 
 export interface StateRecord {
@@ -25,6 +36,7 @@ export interface StateRecord {
   parentStateId: string | null;
   tags: string[];
   stats: SnapshotStats;
+  metadata?: StateMetadata;
 }
 
 export interface LaneRecord {

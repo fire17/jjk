@@ -49,12 +49,19 @@ import {
   resolveLane,
   resolveState,
   resolveTimeshift,
+  updateBranchTarget,
   saveState,
   saveRepo,
   isTipStateOnBranch,
 } from "./store";
 import type { MapHit, SaveStateRequest, StateRecord } from "./types";
-import { formatRelativePath, nowIso, stateDisplayBranch } from "./utils";
+import {
+  continuationBranchName,
+  formatRelativePath,
+  nowIso,
+  shortStateId,
+  stateDisplayBranch,
+} from "./utils";
 import { JJK_VERSION } from "./version";
 import { runWatch } from "./watch";
 import { runRepl } from "./repl";
@@ -70,6 +77,7 @@ Safe spaces:
 
 States:
   jjk <description>
+  jjk save [description]
   jjk step [description]
   jjk nice [description]
   jjk star [description]
@@ -79,6 +87,7 @@ States:
   jjk pick <state>
   jjk promote <state> <nice|star>
   jjk return <state>
+  jjk update <branch> [state]
 
 Flow:
   jjk lane
@@ -110,13 +119,53 @@ async function promptForState(states: StateRecord[]): Promise<StateRecord> {
   return states[index];
 }
 
-async function handleSave(root: string, request: SaveStateRequest): Promise<void> {
-  const result = saveState(root, request);
+async function handleSave(
+  root: string,
+  request: SaveStateRequest,
+  options?: {
+    allowMainBranchSave?: boolean;
+    continuationBranch?: string | null;
+    suppressReturnBranchFork?: boolean;
+  },
+): Promise<void> {
+  if (request.kind === "new") {
+    const description = request.description.trim();
+    if (description.length === 0) {
+      throw new Error("Provide a description for the new branch state.");
+    }
+    createOrSwitchBranch(root, continuationBranchName(description), getHeadCommit(root) ?? undefined);
+  }
+
+  const result = saveState(root, request, options);
   console.log(renderStateSummary(result.state));
 }
 
 function shouldColorizeOutput(): boolean {
   return Boolean(process.stdout.isTTY) && process.env.NO_COLOR === undefined;
+}
+
+function resolveCurrentState(root: string, states: StateRecord[]): StateRecord | null {
+  const branch = getCurrentBranch(root);
+  const headCommit = getHeadCommit(root);
+  if (headCommit) {
+    for (let index = states.length - 1; index >= 0; index -= 1) {
+      const state = states[index];
+      if (state && state.commit === headCommit && stateDisplayBranch(state) === branch) {
+        return state;
+      }
+    }
+
+    for (let index = states.length - 1; index >= 0; index -= 1) {
+      const state = states[index];
+      if (state && state.commit === headCommit) {
+        return state;
+      }
+    }
+  }
+
+  const repo = loadRepo(root);
+  const laneName = repo.branchLaneMap[branch];
+  return laneName ? states.find((state) => state.id === repo.lanes[laneName]?.currentStateId) ?? null : null;
 }
 
 function scanForMapHits(start: string, maxDepth = 4): MapHit[] {
@@ -218,7 +267,7 @@ async function handleReturn(root: string, query: string): Promise<void> {
     repoData.returnContext = null;
     saveRepo(root, repoData);
     importIntoJj(root);
-    console.log(`returned to ${state.id} on main`);
+    console.log(`returned to ${shortStateId(state.id)} on main`);
     return;
   }
 
@@ -238,7 +287,7 @@ async function handleReturn(root: string, query: string): Promise<void> {
     };
     saveRepo(root, repoData);
     importIntoJj(root);
-    console.log(`returned to ${state.id} on ${stateDisplayBranch(state)}`);
+    console.log(`returned to ${shortStateId(state.id)} on ${stateDisplayBranch(state)}`);
     return;
   }
 
@@ -254,7 +303,7 @@ async function handleReturn(root: string, query: string): Promise<void> {
   };
   saveRepo(root, repoData);
   importIntoJj(root);
-  console.log(`returned to ${state.id}`);
+  console.log(`returned to ${shortStateId(state.id)}`);
 }
 
 export async function runCli(argv: string[], cwd: string): Promise<void> {
@@ -292,31 +341,50 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
   const root = requireSafeSpace(cwd);
 
   switch (command) {
+    case "save":
+      await handleSave(
+        root,
+        {
+          kind: "save",
+          description: args.slice(1).join(" "),
+        },
+        {
+          allowMainBranchSave: true,
+          continuationBranch: null,
+          suppressReturnBranchFork: true,
+        },
+      );
+      return;
     case "step":
-    case "nice":
     case "star":
       await handleSave(root, {
         kind: command,
         description: args.slice(1).join(" "),
       });
       return;
+    case "nice":
+      await handleSave(
+        root,
+        {
+          kind: "nice",
+          description: args.slice(1).join(" "),
+        },
+        {
+          suppressReturnBranchFork: true,
+        },
+      );
+      return;
     case "see": {
       const repo = loadRepo(root);
-      const headCommit = getHeadCommit(root);
       const colorize = shouldColorizeOutput();
-      const currentState =
-        repo.states.find((state) => state.commit === headCommit) ??
-        (() => {
-          const branch = getCurrentBranch(root);
-          const laneName = repo.branchLaneMap[branch];
-          return laneName ? repo.states.find((state) => state.id === repo.lanes[laneName]?.currentStateId) ?? null : null;
-        })();
+      const currentState = resolveCurrentState(root, repo.states);
       console.log(renderGraph(repo, { currentStateId: currentState?.id ?? null, colorize }));
       console.log("");
       console.log(
         renderStateTable(listStates(root), {
           colorize,
           currentStateId: currentState?.id ?? null,
+          repo,
         }),
       );
       return;
@@ -351,13 +419,8 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
 
       if (queryA.length === 0) {
         const repo = loadRepo(root);
-        const branch = getCurrentBranch(root);
-        const laneName = repo.branchLaneMap[branch];
-        const lane = laneName ? repo.lanes[laneName] : null;
-        const currentState =
-          lane?.currentStateId
-            ? resolveState(root, lane.currentStateId)
-            : repo.states[repo.states.length - 1];
+        const currentState = resolveCurrentState(root, repo.states) ??
+          repo.states[repo.states.length - 1];
         if (!currentState) {
           throw new Error("No state is available to diff against.");
         }
@@ -448,13 +511,31 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
 
       const state = resolveState(root, query);
       const promoted = promoteState(root, state.id, targetKind, description);
-      console.log(`promoted ${state.id} to ${targetKind}`);
+      console.log(`promoted ${shortStateId(state.id)} to ${targetKind}`);
       console.log(renderStateSummary(promoted));
       return;
     }
     case "return":
       await handleReturn(root, args.slice(1).join(" "));
       return;
+    case "update": {
+      const branchQuery = args[1] ?? "";
+      const stateQuery = args.slice(2).join(" ").trim();
+      if (branchQuery.trim().length === 0) {
+        throw new Error("Usage: jjk update <branch> [state]");
+      }
+
+      const updated = updateBranchTarget(
+        root,
+        branchQuery,
+        stateQuery.length > 0 ? stateQuery : undefined,
+      );
+      const targetLabel = updated.state
+        ? `${shortStateId(updated.state.id)} ${updated.state.label}`
+        : updated.commit.slice(0, 8);
+      console.log(`updated ${updated.branch} to ${targetLabel}`);
+      return;
+    }
     case "watch": {
       const repo = loadRepo(root);
       await runWatch(root, repo.settings.watchDebounceMs);
@@ -569,7 +650,7 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
             force: true,
             reset: true,
           });
-          console.log(`timeshift restored to ${record.branch} at ${state.id}`);
+          console.log(`timeshift restored to ${record.branch} at ${shortStateId(state.id)}`);
         } else {
           createOrSwitchBranch(root, record.branch, undefined, {
             force: true,
@@ -586,7 +667,7 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
     }
     default:
       await handleSave(root, {
-        kind: "save",
+        kind: "new",
         description: args.join(" "),
       });
   }

@@ -1,6 +1,13 @@
 import type { LaneRecord, MapHit, RepoData, StateRecord, TimeshiftRecord } from "./types";
 import type { AheadBehindStatus, WorktreeStatus } from "./git";
-import { formatDate, pad, stateDisplayBranch } from "./utils";
+import {
+  formatDate,
+  pad,
+  shortCommit,
+  shortStateId,
+  stateDisplayBranch,
+  stateGitCommit,
+} from "./utils";
 
 const ANSI_RESET = "\u001b[0m";
 const BRANCH_COLOR_PALETTE = [
@@ -21,7 +28,8 @@ export function renderStateSummaryWithOptions(
   },
 ): string {
   const parts = [
-    `${state.id}`,
+    shortStateId(state.id),
+    `git=${shortCommit(stateGitCommit(state))}`,
     `[${state.kind}]`,
     state.label,
     `branch=${stateDisplayBranch(state)}`,
@@ -47,7 +55,7 @@ export function renderStateChoiceTable(
 
   const separator = "  ";
   const indexWidth = Math.max(2, String(states.length).length);
-  const idWidth = Math.max(10, ...states.map((state) => state.id.length));
+  const idWidth = Math.max(8, ...states.map((state) => shortStateId(state.id).length));
   const kindWidth = Math.max(6, ...states.map((state) => state.kind.length));
   const labelWidth = Math.max(18, ...states.map((state) => Math.min(state.label.length, 40)));
   const branchWidth = Math.max(
@@ -60,7 +68,7 @@ export function renderStateChoiceTable(
   ];
 
   states.forEach((state, index) => {
-    const line = `${pad(String(index + 1), indexWidth)}${separator}${pad(state.id, idWidth)}${separator}${pad(state.kind, kindWidth)}${separator}${pad(truncate(state.label, 40), labelWidth)}${separator}${pad(truncate(stateDisplayBranch(state), 24), branchWidth)}${separator}${formatDate(state.createdAt)}`;
+    const line = `${pad(String(index + 1), indexWidth)}${separator}${pad(shortStateId(state.id), idWidth)}${separator}${pad(state.kind, kindWidth)}${separator}${pad(truncate(state.label, 40), labelWidth)}${separator}${pad(truncate(stateDisplayBranch(state), 24), branchWidth)}${separator}${formatDate(state.createdAt)}`;
     lines.push(
       colorizeBranchLine(
         line,
@@ -86,15 +94,7 @@ export function renderGraph(
     .slice()
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   const children = new Map<string | null, StateRecord[]>();
-  const latestByDisplayBranch = new Map<string, StateRecord>();
-
-  for (const state of sorted) {
-    latestByDisplayBranch.set(stateDisplayBranch(state), state);
-  }
-
-  const leafStateIds = new Set(
-    Array.from(latestByDisplayBranch.values()).map((state) => state.id),
-  );
+  const leafStateIds = resolveBranchLeafStateIds(sorted, repo);
 
   for (const state of sorted) {
     const parent = state.parentStateId;
@@ -115,7 +115,7 @@ export function renderGraph(
       const isCurrent = state.id === options?.currentStateId;
       const isLeaf = leafStateIds.has(state.id);
       const leafMarker = isLeaf ? "^" : " ";
-      const line = `${prefix}${connector} ${currentMarker}${leafMarker} ${state.id} [${state.kind}] ${state.label} (${stateDisplayBranch(state)})`;
+      const line = `${prefix}${connector} ${currentMarker}${leafMarker} ${shortStateId(state.id)} [${state.kind}] ${state.label} (${stateDisplayBranch(state)})`;
       lines.push(
         colorizeBranchLine(
           line,
@@ -142,6 +142,7 @@ export function renderStateTable(
   options?: {
     colorize?: boolean;
     currentStateId?: string | null;
+    repo?: RepoData;
   },
 ): string {
   if (states.length === 0) {
@@ -149,19 +150,12 @@ export function renderStateTable(
   }
 
   const lines = [
-    `${pad("id", 10)} ${pad("kind", 6)} ${pad("lane", 16)} ${pad("branch", 18)} label`,
+    `${pad("id", 10)} ${pad("git", 8)} ${pad("kind", 6)} ${pad("lane", 16)} ${pad("branch", 18)} label`,
   ];
-  const latestByDisplayBranch = new Map<string, StateRecord>();
+  const leafStateIds = resolveBranchLeafStateIds(states, options?.repo);
 
   for (const state of states) {
-    latestByDisplayBranch.set(stateDisplayBranch(state), state);
-  }
-  const leafStateIds = new Set(
-    Array.from(latestByDisplayBranch.values()).map((state) => state.id),
-  );
-
-  for (const state of states) {
-    const line = `${pad(state.id, 10)} ${pad(state.kind, 6)} ${pad(stateDisplayBranch(state), 16)} ${pad(stateDisplayBranch(state), 18)} ${state.label}`;
+    const line = `${pad(shortStateId(state.id), 8)} ${pad(shortCommit(stateGitCommit(state), 8), 8)} ${pad(state.kind, 6)} ${pad(stateDisplayBranch(state), 16)} ${pad(stateDisplayBranch(state), 18)} ${state.label}`;
     lines.push(
       colorizeBranchLine(
         line,
@@ -174,6 +168,37 @@ export function renderStateTable(
   }
 
   return lines.join("\n");
+}
+
+function resolveBranchLeafStateIds(
+  states: StateRecord[],
+  repo?: RepoData,
+): Set<string> {
+  const latestByDisplayBranch = new Map<string, StateRecord>();
+
+  for (const state of states) {
+    latestByDisplayBranch.set(stateDisplayBranch(state), state);
+  }
+
+  if (repo) {
+    for (const [branch, laneName] of Object.entries(repo.branchLaneMap)) {
+      const lane = repo.lanes[laneName];
+      const stateId = lane?.currentStateId;
+      if (!stateId) {
+        continue;
+      }
+      const state = states.find((candidate) => candidate.id === stateId);
+      if (!state) {
+        continue;
+      }
+      if (stateDisplayBranch(state) !== branch) {
+        continue;
+      }
+      latestByDisplayBranch.set(branch, state);
+    }
+  }
+
+  return new Set(Array.from(latestByDisplayBranch.values()).map((state) => state.id));
 }
 
 function colorizeBranchLine(
@@ -233,7 +258,7 @@ export function renderStory(states: StateRecord[]): string {
 
   return memorable
     .map((state) =>
-      `${state.id} [${state.kind}] ${state.label}\n  ${state.description}\n  ${formatDate(state.createdAt)} on ${stateDisplayBranch(state)}`
+      `${shortStateId(state.id)} [${state.kind}] ${state.label}\n  ${state.description}\n  ${formatDate(state.createdAt)} on ${stateDisplayBranch(state)}`
     )
     .join("\n\n");
 }
@@ -306,7 +331,7 @@ export function renderStatus(input: {
   aheadBehind: AheadBehindStatus | null;
 }): string {
   const latest = input.latestState
-    ? `${input.latestState.id} [${input.latestState.kind}] ${input.latestState.label}`
+    ? `${shortStateId(input.latestState.id)} [${input.latestState.kind}] ${input.latestState.label}`
     : "none";
   const head = input.headCommit ? input.headCommit.slice(0, 12) : "unborn";
   const worktree = input.worktree.dirty
