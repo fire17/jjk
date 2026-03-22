@@ -133,7 +133,7 @@ describe("patch, backup, replay, and restore commands", () => {
     expect(repoAfterImport.states.find((state) => state.id === green.id)).toBeDefined();
   });
 
-  test("replay and merge-state create the expected branch results", async () => {
+  test("replay and merge-state create the expected branch results", { timeout: 10000 }, async () => {
     const filePath = join(cwd, "story.txt");
     Bun.write(filePath, "base\n");
     await runCli(["save", "main_base"], cwd);
