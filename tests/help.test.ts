@@ -66,11 +66,24 @@ describe("help output", () => {
     expect(slash).toBe(base);
     expect(long).toBe(base);
     expect(dash).toBe(base);
-    expect(base).toContain("jjk graph [--deleted]");
+    expect(base).toContain("jjk inspect <state>");
+    expect(base).toContain("jjk search <query>");
+    expect(base).toContain("jjk timeline");
+    expect(base).toContain("jjk graph [--deleted] [--branch <branch>]");
+    expect(base).toContain("jjk see [--deleted] [--kind <kind>] [--tag <tag>] [--since <time>]");
+    expect(base).toContain("jjk favorites");
+    expect(base).toContain("jjk compare-branch <a> <b>");
     expect(base).toContain("jjk shell-init [zsh|bash]");
+    expect(base).toContain("jjk move <state> <branch>");
+    expect(base).toContain("jjk rename-branch <old> <new>");
+    expect(base).toContain("jjk branch-from <state> <label>");
     expect(base).toContain("Examples:");
     expect(base).toContain("Basic:");
     expect(base).toContain("Advanced flow:");
+    expect(base).toContain("jjk where");
+    expect(base).toContain("jjk continue");
+    expect(base).toContain("jjk heads");
+    expect(base).toContain("jjk log <branch>");
   });
 
   test("graph command prints the log-style state graph", async () => {

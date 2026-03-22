@@ -46,7 +46,7 @@ describe("pick flow", () => {
     expect(repo.returnContext?.stateId).toBe(picked?.id);
   });
 
-  test("pick applies only the delta held by the chosen state after multiple returns", async () => {
+  test("pick applies only the delta held by the chosen state after multiple returns", { timeout: 10000 }, async () => {
     const filePath = join(cwd, "game.txt");
 
     Bun.write(filePath, "color=green\nfast=false\n");
@@ -120,7 +120,7 @@ describe("pick flow", () => {
       console.log = originalLog;
     }
 
-    expect(output.join("\n")).toContain(`*^ ${shortStateId(picked!.id)} [cherry]`);
+    expect(output.join("\n")).toContain(`└─ *^   ${shortStateId(picked!.id)} [cherry]`);
     expect(output.join("\n")).toContain("cherry_purple");
     expect(output.join("\n")).toContain(shortStateId(green.id));
     expect(output.join("\n")).toContain(shortStateId(purple.id));

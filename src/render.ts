@@ -46,12 +46,85 @@ export function renderStateSummaryWithOptions(
     parts.splice(3, 0, `lane=${state.lane}`);
   }
 
-  return parts.join(" ");
+  return appendStateMetadata(parts.join(" "), state);
+}
+
+export function renderStateInspection(repo: RepoData, state: StateRecord): string {
+  const parent = state.parentStateId
+    ? repo.states.find((candidate) => candidate.id === state.parentStateId) ?? null
+    : null;
+  const children = repo.states
+    .filter((candidate) => candidate.parentStateId === state.id && !isDeletedState(candidate))
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const metadata = state.metadata ?? {};
+  const lines = [
+    renderStateSummary(state),
+    `description: ${state.description}`,
+    `message: ${stateMessage(state) ?? "-"}`,
+    `branch: ${state.branch}`,
+    `display branch: ${stateDisplayBranch(state)}`,
+    `lane: ${state.lane}`,
+    `parent: ${parent ? `${shortStateId(parent.id)} ${parent.label}` : "-"}`,
+    `children: ${children.length > 0 ? children.map((child) => `${shortStateId(child.id)} ${child.label}`).join(", ") : "-"}`,
+    `tags: ${state.tags.length > 0 ? state.tags.join(", ") : "-"}`,
+    `git: ${shortCommit(stateGitCommit(state))}`,
+    `base: ${shortLinkedStateId(metadata.base)}`,
+    `cherry: ${shortLinkedStateId(metadata.cherry)}`,
+    `created: ${formatDate(state.createdAt)}`,
+  ];
+
+  if (metadata.deletedAt || metadata.deletedBranch || metadata.deletedLocation) {
+    lines.push(`deleted: yes`);
+    if (metadata.deletedBranch) {
+      lines.push(`deleted branch: ${metadata.deletedBranch}`);
+    }
+    if (metadata.deletedAt) {
+      lines.push(`deleted at: ${formatDate(metadata.deletedAt)}`);
+    }
+  } else {
+    lines.push("deleted: no");
+  }
+
+  if (metadata.stashFromBranch) {
+    lines.push(`stash from branch: ${metadata.stashFromBranch}`);
+  }
+  if (metadata.stashFromStateId) {
+    lines.push(`stash from state: ${shortStateId(metadata.stashFromStateId)}`);
+  }
+  if (metadata.priorContexts && metadata.priorContexts.length > 0) {
+    lines.push(`prior contexts: ${metadata.priorContexts.length}`);
+  }
+
+  lines.push(
+    `stats: changed=${state.stats.changedFiles}` +
+      `${state.stats.insertedLines !== undefined ? ` inserted=${state.stats.insertedLines}` : ""}` +
+      `${state.stats.deletedLines !== undefined ? ` deleted=${state.stats.deletedLines}` : ""}`,
+  );
+
+  return lines.join("\n");
 }
 
 function appendStateMessage(text: string, state: StateRecord): string {
   const message = stateMessage(state);
   return message ? `${text} | ${message}` : text;
+}
+
+function appendStateMetadata(text: string, state: StateRecord): string {
+  const metadata = state.metadata;
+  if (!metadata) {
+    return text;
+  }
+
+  const parts = [
+    metadata.status ? `status=${metadata.status}` : "",
+    metadata.assignee ? `assignee=${metadata.assignee}` : "",
+    metadata.note ? `note=${truncate(singleLine(metadata.note), 60)}` : "",
+    metadata.handoff ? `handoff=${truncate(singleLine(metadata.handoff), 60)}` : "",
+    metadata.publishedAt ? `published=${formatDate(metadata.publishedAt)}` : "",
+    metadata.quarantinedAt ? `quarantine=${formatDate(metadata.quarantinedAt)}` : "",
+  ].filter(Boolean);
+
+  return parts.length > 0 ? `${text} | ${parts.join(" | ")}` : text;
 }
 
 function singleLine(value: string): string {
@@ -89,6 +162,7 @@ function stateLabelWithMarkers(
     options?.includeStar === false ? "" : stateHasStar(state) ? "★" : "",
     stateHasTag(state, "thumbsup") ? "👍" : "",
     stateHasTag(state, "thumbsdown") ? "👎" : "",
+    stateHasTag(state, "pin") ? "📌" : "",
   ].filter(Boolean);
   const prefix = markers.length > 0 ? `${markers.join("")} ` : "";
   return `${prefix}${state.label}`;
