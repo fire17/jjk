@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -22,12 +22,9 @@ import {
   isJjRepo,
   localBranchExists,
   pickStateChanges,
-  getStateChangedFiles,
-  getStatePatch,
   pullFastForward,
   pruneJjKeepRefs,
   pushCurrentBranchAndStateRefs,
-  revertStateChanges,
   switchBranch,
   switchToDetachedCommit,
   worktreeMatchesCommit,
@@ -40,7 +37,6 @@ import {
   renderLanes,
   renderMap,
   renderStateChoiceTable,
-  renderStateInspection,
   renderStateSummary,
   renderStatus,
   renderStateTable,
@@ -48,10 +44,8 @@ import {
   renderTimeshifts,
 } from "./render";
 import {
-  amendState,
   createBackup,
   attachBranchToState,
-  branchFromState,
   createLane,
   createBranchAtState,
   deleteState,
@@ -64,40 +58,23 @@ import {
   listTimeshifts,
   loadBackup,
   loadRepo,
-  moveState,
-  noteState,
-  pinState,
-  getWorkspaceSnapshotHistory,
-  listWorkspaceSnapshots,
   promoteState,
   recordWorkspaceSnapshot,
   redoWorkspaceSnapshot,
   recoverState,
   recordFreeze,
-  renameBranch,
-  renameState,
   rememberTimeshift,
   requireSafeSpace,
   resolveLane,
   resolveLatestStateForBranch,
   resolveState,
   resolveTimeshift,
-  resolveBackupPath,
   saveState,
   saveRepo,
   isTipStateOnBranch,
-  annotateState,
-  listAliases,
-  removeAlias,
-  setAlias,
-  setBranchLock,
-  setDefaultBranch,
-  isBranchLocked,
   starState,
   toggleStateTag,
-  splitState,
   unstarState,
-  unpinState,
   stashWorkspace,
   undoWorkspaceSnapshot,
   updateBranchTarget,
@@ -106,17 +83,12 @@ import type { MapHit, RepoData, SaveStateRequest, StateRecord } from "./types";
 import {
   branchSegment,
   continuationBranchName,
-  formatDate,
   formatRelativePath,
   isDeletedState,
-  findStateMatches,
   nowIso,
   parseStateLabelAndMessage,
   shortStateId,
-  shortCommit,
   stateDisplayBranch,
-  stateHasStar,
-  stateHasTag,
 } from "./utils";
 import { JJK_VERSION } from "./version";
 import { runWatch } from "./watch";
@@ -133,89 +105,36 @@ Safe spaces:
 
 States:
   jjk current
-  jjk where
   jjk <description>
   jjk save [description]
   jjk step [description]
   jjk nice [description]
   jjk star [state]
   jjk unstar [state]
-  jjk pin <state>
-  jjk unpin <state>
   jjk thumbsup [state]
   jjk thumbsdown [state]
-  jjk note <state>, <message>
   jjk stash [description]
-  jjk inspect <state>
-  jjk search <query>
-  jjk timeline
-  jjk see [--deleted] [--kind <kind>] [--tag <tag>] [--since <time>]
-  jjk graph [--deleted] [--branch <branch>]
-  jjk favorites
+  jjk see [--deleted]
+  jjk graph [--deleted]
   jjk show [state]
-  jjk patch [state]
-  jjk files [state]
-  jjk touched <branch>
   jjk story
   jjk diff [--atomic] [state] [state]
-  jjk log <branch>
   jjk git log
   jjk delete <state>
   jjk recover <deleted-state>
   jjk undo [-rm] [-y]
   jjk redo
-  jjk archive <state>
-  jjk quarantine <state>
-  jjk open <state>
-  jjk copy-id <query>
-  jjk recent [limit]
-  jjk aliases [add <name> <query>]
-  jjk default-branch <branch>
-  jjk config
-  jjk mark <state> <status>
-  jjk assign-note <state>, <person/note>
-  jjk ready <state>
-  jjk publish <state>
-  jjk handoff <state>
-  jjk checkpoint [description]
-  jjk autosave now
-  jjk lock <branch>
-  jjk unlock <branch>
-  jjk clean
-  jjk gc
   jjk pick <state>
-  jjk replay <state> onto <branch>
-  jjk merge-state <state> into <branch>
-  jjk revert-state <state>
   jjk promote <state> <nice|star>
-  jjk compare-branch <a> <b>
-  jjk move <state> <branch>
-  jjk split <state> <new-branch>
-  jjk branch-from <state> <label>
-  jjk rename-state <state> <new-label>
-  jjk rename-branch <old> <new>
   jjk backup [label]
-  jjk backups
-  jjk snapshot-log
   jjk load <backupfile>
-  jjk restore <backupfile> [--preview]
-  jjk export <state> <file>
-  jjk import <file>
   jjk return <state>
   jjk lastest <branch>
-  jjk continue
   jjk return -
   jjk back
   jjk forward
   jjk up
   jjk down
-  jjk prev
-  jjk next
-  jjk root <state>
-  jjk trail <state>
-  jjk children <state>
-  jjk parents <state>
-  jjk heads
   jjk update <branch> [state]
   jjk branch [name]
   jjk checkout <branch>
@@ -243,44 +162,26 @@ Examples:
     jjk save "main checkpoint"
     jjk see
     jjk graph
-    jjk timeline
-    jjk where
 
   Branching:
     jjk green
     jjk purple
     jjk return green
     jjk orange
-    jjk continue
-    jjk branch-from purple review_lane
-    jjk move purple jjk/review_lane
-    jjk rename-state purple polished_purple
-    jjk rename-branch jjk/green jjk/green_experiment
 
   Review markers:
     jjk star
     jjk thumbsup purple
     jjk thumbsdown fast_orange
-    jjk favorites
 
   Compare and inspect:
-    jjk inspect purple
-    jjk search purple
     jjk show purple
-    jjk patch purple
-    jjk files purple
-    jjk touched jjk/purple
     jjk diff purple orange
     jjk diff --atomic purple fast_purple
-    jjk compare-branch jjk/green jjk/orange
-    jjk log jjk/purple
     jjk git log
 
   Recovery:
     jjk backup before_refactor
-    jjk backups
-    jjk snapshot-log
-    jjk restore before_refactor --preview
     jjk undo
     jjk redo
     jjk load before_refactor
@@ -289,24 +190,12 @@ Examples:
     jjk return orange
     jjk pick fast_purple
     jjk nice fast_orange
-    jjk replay fast_purple onto jjk/orange
-    jjk merge-state fast_purple into jjk/orange
-    jjk revert-state orange
     jjk update jjk/purple purple
     jjk branch review_lane
     jjk fork review_slice
     jjk fork --worktree
     jjk worktree purple
     jjk checkout jjk/purple
-    jjk graph --branch jjk/purple
-    jjk see --kind new
-    jjk see --tag star
-    jjk see --since 2026-03-22T00:00:00Z
-    jjk root purple
-    jjk trail purple
-    jjk children purple
-    jjk parents purple
-    jjk heads
 
   Shell integration:
     eval "$(jjk shell-init zsh)"
@@ -367,122 +256,6 @@ function buildSaveRequest(kind: SaveStateRequest["kind"], input: string): SaveSt
     kind,
     ...parseStateLabelAndMessage(input),
   };
-}
-
-interface StateViewFilters {
-  includeDeleted: boolean;
-  kind?: string;
-  tag?: string;
-  since?: number;
-  branch?: string;
-}
-
-function parseStateViewFilters(
-  args: string[],
-  options?: {
-    allowBranch?: boolean;
-  },
-): StateViewFilters {
-  const filters: StateViewFilters = {
-    includeDeleted: false,
-  };
-
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (arg === "--deleted") {
-      filters.includeDeleted = true;
-      continue;
-    }
-    if (arg === "--kind") {
-      const value = args[++index];
-      if (!value) {
-        throw new Error("Usage: flag `--kind` requires a value.");
-      }
-      filters.kind = value.trim();
-      continue;
-    }
-    if (arg === "--tag") {
-      const value = args[++index];
-      if (!value) {
-        throw new Error("Usage: flag `--tag` requires a value.");
-      }
-      filters.tag = value.trim();
-      continue;
-    }
-    if (arg === "--since") {
-      const value = args[++index];
-      if (!value) {
-        throw new Error("Usage: flag `--since` requires a value.");
-      }
-      const timestamp = Date.parse(value);
-      if (Number.isNaN(timestamp)) {
-        throw new Error(`Invalid date value for --since: ${value}`);
-      }
-      filters.since = timestamp;
-      continue;
-    }
-    if (options?.allowBranch && arg === "--branch") {
-      const value = args[++index];
-      if (!value) {
-        throw new Error("Usage: flag `--branch` requires a value.");
-      }
-      filters.branch = value.trim();
-      continue;
-    }
-
-    throw new Error(`Unknown flag: ${arg}`);
-  }
-
-  return filters;
-}
-
-function filterStatesForView(states: StateRecord[], filters: StateViewFilters): StateRecord[] {
-  return states.filter((state) => {
-    if (!filters.includeDeleted && isDeletedState(state)) {
-      return false;
-    }
-    if (filters.kind && state.kind !== filters.kind) {
-      return false;
-    }
-    if (filters.tag) {
-      if (filters.tag === "star") {
-        if (!stateHasStar(state)) {
-          return false;
-        }
-      } else if (!stateHasTag(state, filters.tag)) {
-        return false;
-      }
-    }
-    if (filters.since !== undefined && new Date(state.createdAt).getTime() < filters.since) {
-      return false;
-    }
-    if (filters.branch) {
-      const branch = stateDisplayBranch(state);
-      if (branch !== filters.branch && state.branch !== filters.branch && state.lane !== filters.branch) {
-        return false;
-      }
-    }
-    return true;
-  });
-}
-
-function resolveBranchQuery(root: string, query: string): string {
-  const resolvedLane = resolveLane(root, query);
-  return resolvedLane?.branch ?? normalizeBranchName(query);
-}
-
-function splitNoteArgs(input: string): { state: string; message: string } {
-  const separator = input.indexOf(",");
-  if (separator <= 0) {
-    throw new Error("Usage: jjk note <state>, <message>");
-  }
-
-  const state = input.slice(0, separator).trim();
-  const message = input.slice(separator + 1).trim();
-  if (!state || !message) {
-    throw new Error("Usage: jjk note <state>, <message>");
-  }
-  return { state, message };
 }
 
 function shouldColorizeOutput(): boolean {
@@ -585,9 +358,6 @@ function createBranchWorktree(
   state: StateRecord;
 } {
   const branch = uniqueBranchName(root, preferredBranch);
-  if (isBranchLocked(root, branch)) {
-    throw new Error(`Branch \`${branch}\` is locked.`);
-  }
   const path = uniqueWorktreePath(root, branch);
   addWorktree(root, path, branch, {
     createBranch: true,
@@ -702,85 +472,11 @@ function runGitTextCommand(
 
 function resolveDefaultState(root: string): StateRecord {
   const repo = loadRepo(root);
-  const defaultBranch = repo.settings.defaultBranch?.trim() ?? "";
-  if (defaultBranch.length > 0) {
-    const defaultState = resolveLatestStateForBranch(root, defaultBranch);
-    if (defaultState) {
-      return defaultState;
-    }
-  }
-
   const currentState = resolveCurrentState(root, repo.states) ?? repo.states[repo.states.length - 1] ?? null;
   if (!currentState) {
     throw new Error("No state is available.");
   }
   return currentState;
-}
-
-function resolveBranchName(root: string, query: string): string {
-  const lane = resolveLane(root, query);
-  return lane?.branch ?? query.trim();
-}
-
-function collectStateTrail(root: string, state: StateRecord): StateRecord[] {
-  const repo = loadRepo(root);
-  const trail = [state];
-  let cursor = state;
-
-  while (cursor.parentStateId) {
-    const parent = repo.states.find(
-      (candidate) => candidate.id === cursor.parentStateId && !isDeletedState(candidate),
-    );
-    if (!parent) {
-      break;
-    }
-    trail.push(parent);
-    cursor = parent;
-  }
-
-  return trail.reverse();
-}
-
-function renderStateTrail(trail: StateRecord[]): string {
-  if (trail.length === 0) {
-    return "No states available.";
-  }
-
-  return trail
-    .map((state, index) => {
-      const indent = "  ".repeat(index);
-      const prefix = index === 0 ? "" : "└─ ";
-      return `${indent}${prefix}${renderStateSummary(state)}`;
-    })
-    .join("\n");
-}
-
-function renderStateList(states: StateRecord[]): string {
-  if (states.length === 0) {
-    return "No states available.";
-  }
-
-  return states.map((state) => renderStateSummary(state)).join("\n");
-}
-
-function renderBranchHeads(root: string): string {
-  const currentBranch = getCurrentBranchName(root);
-  const lines = listLanes(root).map((lane) => {
-    let head: StateRecord | null = null;
-    try {
-      head = resolveLatestStateForBranch(root, lane.branch);
-    } catch {
-      head = null;
-    }
-    const marker = lane.branch === currentBranch ? "*" : " ";
-    return `${marker} ${lane.branch}: ${head ? renderStateSummary(head) : "none"}`;
-  });
-
-  if (lines.length === 0) {
-    return "No heads available.";
-  }
-
-  return lines.join("\n");
 }
 
 function getAtomicBaseCommit(state: StateRecord): string {
@@ -818,214 +514,6 @@ function compareAtomicStates(root: string, stateA: StateRecord, stateB: StateRec
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }
-}
-
-function renderAtomicChain(root: string, state: StateRecord): string {
-  const repo = loadRepo(root);
-  const chain: StateRecord[] = [];
-  let current: StateRecord | null = state;
-
-  while (current) {
-    chain.push(current);
-    current = current.parentStateId
-      ? repo.states.find((candidate) => candidate.id === current?.parentStateId) ?? null
-      : null;
-  }
-
-  chain.reverse();
-  return chain
-    .map((entry, index) =>
-      [
-        `${index + 1}/${chain.length} ${shortStateId(entry.id)} [${entry.kind}] ${entry.label} (${stateDisplayBranch(entry)})`,
-        renderAtomicStateDiff(root, entry),
-      ].join("\n"),
-    )
-    .join("\n\n");
-}
-
-function renderStateFiles(root: string, state: StateRecord): string {
-  const files = getStateChangedFiles(root, state.parentCommit ?? EMPTY_TREE, state.commit);
-  if (files.length === 0) {
-    return "No files changed in the selected state.";
-  }
-  return files.join("\n");
-}
-
-function renderTouchedFiles(root: string, branchQuery: string): string {
-  const branchState = resolveLatestStateForBranch(root, branchQuery);
-  const branch = stateDisplayBranch(branchState);
-  const touched = new Set<string>();
-  for (const state of listStates(root)) {
-    if (stateDisplayBranch(state) !== branch) {
-      continue;
-    }
-    for (const file of getStateChangedFiles(root, state.parentCommit ?? EMPTY_TREE, state.commit)) {
-      touched.add(file);
-    }
-  }
-
-  if (touched.size === 0) {
-    return `No files touched on ${branch}.`;
-  }
-
-  return Array.from(touched).sort((left, right) => left.localeCompare(right)).join("\n");
-}
-
-function renderBackupsList(root: string): string {
-  const backupsRoot = join(root, ".jjk", "backups");
-  if (!existsSync(backupsRoot)) {
-    return "No backups saved yet.";
-  }
-
-  const files = readdirSync(backupsRoot)
-    .map((name) => {
-      const path = join(backupsRoot, name);
-      const stats = statSync(path);
-      return {
-        name,
-        path,
-        size: stats.size,
-        createdAt: stats.mtime.toISOString(),
-      };
-    })
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-
-  if (files.length === 0) {
-    return "No backups saved yet.";
-  }
-
-  const separator = "  ";
-  const nameWidth = Math.max(12, ...files.map((entry) => entry.name.length));
-  const sizeWidth = Math.max(8, ...files.map((entry) => formatFileSize(entry.size).length));
-  const lines = [
-    `${"#".padEnd(2)}${separator}${"backup".padEnd(nameWidth)}${separator}${"size".padEnd(sizeWidth)}${separator}modified`,
-  ];
-
-  files.forEach((entry, index) => {
-    lines.push(
-      `${String(index + 1).padEnd(2)}${separator}${entry.name.padEnd(nameWidth)}${separator}${formatFileSize(entry.size).padEnd(sizeWidth)}${separator}${formatDate(entry.createdAt)}`,
-    );
-  });
-
-  return lines.join("\n");
-}
-
-function renderSnapshotLog(root: string): string {
-  const history = getWorkspaceSnapshotHistory(root);
-  if (history.entries.length === 0) {
-    return "No workspace snapshots recorded yet.";
-  }
-
-  const lines = [
-    `${"#".padEnd(2)}  ${"id".padEnd(8)}  ${"reason".padEnd(28)}  ${"branch".padEnd(18)}  ${"head".padEnd(12)}  created`,
-  ];
-
-  history.entries.forEach((snapshot, index) => {
-    const current = index === history.index ? "*" : " ";
-    const branch = snapshot.git.currentBranch ?? "(detached)";
-    const head = snapshot.git.headCommit ? shortCommit(snapshot.git.headCommit, 12) : "-";
-    lines.push(
-      `${current}${String(index + 1).padEnd(2)}  ${shortCommit(snapshot.id, 8).padEnd(8)}  ${snapshot.reason.slice(0, 28).padEnd(28)}  ${branch.slice(0, 18).padEnd(18)}  ${head.padEnd(12)}  ${formatDate(snapshot.createdAt)}`,
-    );
-  });
-
-  return lines.join("\n");
-}
-
-function renderBackupPreview(snapshot: { createdAt: string; reason: string; repo: RepoData; git: { currentBranch: string | null; headCommit: string | null; branches: Record<string, string>; }; }): string {
-  const history = snapshot.repo.currentStateHistory ?? null;
-  const currentState = history ? history.entries[history.index] ?? null : null;
-  const laneCount = Object.keys(snapshot.repo.lanes).length;
-  const branchCount = Object.keys(snapshot.git.branches).length;
-  return [
-    `backup preview: ${snapshot.reason}`,
-    `created: ${formatDate(snapshot.createdAt)}`,
-    `current branch: ${snapshot.git.currentBranch ?? "(detached)"}`,
-    `head: ${snapshot.git.headCommit ? shortCommit(snapshot.git.headCommit, 12) : "-"}`,
-    `repo states: ${snapshot.repo.states.length}`,
-    `lanes: ${laneCount}`,
-    `git branches: ${branchCount}`,
-    `current state id: ${currentState ?? "-"}`,
-  ].join("\n");
-}
-
-function applyStateReplay(root: string, sourceState: StateRecord, targetBranchQuery: string, kind: "replay" | "merge-state"): StateRecord {
-  if (hasDirtyWorktree(root)) {
-    saveState(root, {
-      kind: "auto",
-      description: `auto pre-${kind} checkpoint before ${sourceState.id}`,
-    });
-  }
-
-  const targetBranch = normalizeBranchName(targetBranchQuery);
-  let targetState: StateRecord | null = null;
-  try {
-    targetState = resolveLatestStateForBranch(root, targetBranch);
-  } catch {
-    targetState = null;
-  }
-
-  createOrSwitchBranch(root, targetBranch, targetState?.commit ?? getHeadCommit(root) ?? undefined, {
-    force: true,
-    reset: true,
-  });
-
-  const logicalParentCommit = sourceState.parentStateId
-    ? resolveState(root, sourceState.parentStateId).commit
-    : sourceState.parentCommit;
-  const applied = pickStateChanges(root, logicalParentCommit, sourceState.commit);
-  if (!applied) {
-    throw new Error(`No changes to ${kind} from ${shortStateId(sourceState.id)}.`);
-  }
-
-  const result = saveState(root, {
-    kind: "cherry",
-    description: `${kind} ${sourceState.id} ${sourceState.label}`,
-    label: `cherry_${branchSegment(sourceState.label)}`,
-    metadata: {
-      ...(targetState?.id ? { base: targetState.id } : {}),
-      cherry: sourceState.id,
-    },
-  }, {
-    forceCurrentBranch: targetBranch,
-    allowMainBranchSave: targetBranch === "main",
-    continuationBranch: targetBranch,
-    suppressReturnBranchFork: true,
-  });
-
-  const activation = activateState(root, result.state, "returned", {
-    syncHistoryBeforeNavigate: false,
-  });
-  console.log(`${kind} ${sourceState.id} onto ${targetBranch}`);
-  console.log(renderStateSummary(result.state));
-  console.log(activation);
-  recordWorkspaceSnapshot(root, `${kind}:${result.state.id}`);
-  return result.state;
-}
-
-function renderBackupSummary(root: string, path: string, snapshot: unknown): string {
-  if (
-    typeof snapshot !== "object" ||
-    snapshot === null ||
-    !("createdAt" in snapshot) ||
-    !("repo" in snapshot) ||
-    !("git" in snapshot)
-  ) {
-    return `restore preview: ${formatRelativePath(root, path)}`;
-  }
-
-  const typed = snapshot as {
-    createdAt: string;
-    reason: string;
-    repo: RepoData;
-    git: {
-      currentBranch: string | null;
-      headCommit: string | null;
-      branches: Record<string, string>;
-    };
-  };
-
-  return renderBackupPreview(typed);
 }
 
 function stateMatchesWorkspace(
@@ -1099,63 +587,6 @@ function resolveMarkerTarget(root: string, query: string): StateRecord {
     throw new Error("No current state is available.");
   }
   return target;
-}
-
-function renderConfigView(root: string): string {
-  const repo = loadRepo(root);
-  const aliases = Object.entries(listAliases(root));
-  const lockedBranches = repo.settings.lockedBranches ?? [];
-  return [
-    `default branch: ${repo.settings.defaultBranch ?? "unset"}`,
-    `snapshot refs in git: ${repo.settings.showWorkspaceSnapshotsInGit ? "on" : "off"}`,
-    `aliases: ${aliases.length > 0 ? aliases.map(([name, query]) => `${name}=${query}`).join(", ") : "none"}`,
-    `locked branches: ${lockedBranches.length > 0 ? lockedBranches.join(", ") : "none"}`,
-  ].join("\n");
-}
-
-function renderRecentStates(root: string, limit = 8): string {
-  const repo = loadRepo(root);
-  const history = repo.currentStateHistory?.entries ?? [];
-  if (history.length === 0) {
-    return "No visited states yet.";
-  }
-
-  const recentIds = history.slice(Math.max(0, history.length - limit));
-  return recentIds
-    .map((stateId, index) => {
-      const state = repo.states.find((candidate) => candidate.id === stateId);
-      if (!state) {
-        return `${index + 1}. ${stateId}`;
-      }
-      return `${index + 1}. ${renderStateSummary(state)}`;
-    })
-    .join("\n");
-}
-
-function openStateFiles(root: string, state: StateRecord): string {
-  const output = runGitTextCommand(
-    root,
-    ["show", "--name-only", "--pretty=format:", state.commit],
-    "",
-  )
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  if (output.length === 0) {
-    return `No files recorded for ${shortStateId(state.id)} ${state.label}.`;
-  }
-
-  const editor = process.env.EDITOR?.trim();
-  if (editor) {
-    Bun.spawnSync([editor, ...output], {
-      cwd: root,
-      stdout: "inherit",
-      stderr: "inherit",
-    });
-  }
-
-  return `open files for ${shortStateId(state.id)} ${state.label}\n${output.join("\n")}`;
 }
 
 function syncCurrentStateHistory(root: string, currentStateId: string | null): RepoData {
@@ -1534,16 +965,6 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
     case "step":
       await handleSave(root, buildSaveRequest(command, args.slice(1).join(" ")));
       return;
-    case "where": {
-      const currentState = resolveCurrentState(root, loadRepo(root).states);
-      if (!currentState) {
-        throw new Error("No current state is available.");
-      }
-      console.log(
-        `${shortStateId(currentState.id)} [${currentState.kind}] ${currentState.label} on ${stateDisplayBranch(currentState)} (workspace ${getCurrentBranchName(root) ?? "detached"})`,
-      );
-      return;
-    }
     case "star": {
       const target = resolveMarkerTarget(root, args.slice(1).join(" ").trim());
       const starred = starState(root, target.id);
@@ -1560,15 +981,6 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       console.log(renderStateSummary(unstarred));
       return;
     }
-    case "pin":
-    case "unpin": {
-      const target = resolveMarkerTarget(root, args.slice(1).join(" ").trim());
-      const updated = command === "pin" ? pinState(root, target.id) : unpinState(root, target.id);
-      recordWorkspaceSnapshot(root, `${command}:${updated.id}`);
-      console.log(`${command === "pin" ? "pinned" : "unpinned"} ${shortStateId(updated.id)} ${updated.label}`);
-      console.log(renderStateSummary(updated));
-      return;
-    }
     case "thumbsup":
     case "thumbsdown": {
       const target = resolveMarkerTarget(root, args.slice(1).join(" ").trim());
@@ -1578,236 +990,6 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       const enabled = updated.tags.includes(tag);
       console.log(`${enabled ? "enabled" : "disabled"} ${tag} on ${shortStateId(updated.id)} ${updated.label}`);
       console.log(renderStateSummary(updated));
-      return;
-    }
-    case "archive": {
-      const target = resolveMarkerTarget(root, args.slice(1).join(" ").trim());
-      const archived = deleteState(root, target.id);
-      recordWorkspaceSnapshot(root, `archive:${archived.id}`);
-      console.log(`archived ${shortStateId(archived.id)} to ${archived.metadata?.deletedBranch}`);
-      return;
-    }
-    case "quarantine": {
-      const target = resolveMarkerTarget(root, args.slice(1).join(" ").trim());
-      const quarantined = annotateState(root, target.id, (metadata) => ({
-        ...(metadata ?? {}),
-        quarantinedAt: nowIso(),
-        status: "quarantined",
-      }));
-      recordWorkspaceSnapshot(root, `quarantine:${quarantined.id}`);
-      console.log(`quarantined ${shortStateId(quarantined.id)} ${quarantined.label}`);
-      console.log(renderStateSummary(quarantined));
-      return;
-    }
-    case "mark": {
-      const stateQuery = args[1] ?? "";
-      const status = args[2] ?? "";
-      if (stateQuery.length === 0 || status.length === 0) {
-        throw new Error("Usage: jjk mark <state> <status>");
-      }
-      const marked = annotateState(root, resolveState(root, stateQuery).id, (metadata) => ({
-        ...(metadata ?? {}),
-        status,
-      }));
-      recordWorkspaceSnapshot(root, `mark:${marked.id}`);
-      console.log(`marked ${shortStateId(marked.id)} as ${status}`);
-      console.log(renderStateSummary(marked));
-      return;
-    }
-    case "assign-note": {
-      const parsed = parseStateLabelAndMessage(args.slice(1).join(" "));
-      if (parsed.description.length === 0) {
-        throw new Error("Usage: jjk assign-note <state>, <person/note>");
-      }
-      const target = resolveState(root, parsed.description);
-      const [assignee, ...noteParts] = (parsed.message ?? "").split("/").map((part) => part.trim());
-      const note = noteParts.join("/").trim();
-      const assigned = annotateState(root, target.id, (metadata) => ({
-        ...(metadata ?? {}),
-        assignee: assignee && note.length > 0 ? assignee : metadata?.assignee,
-        note: note.length > 0 ? note : metadata?.note,
-      }));
-      recordWorkspaceSnapshot(root, `assign-note:${assigned.id}`);
-      console.log(`assigned note on ${shortStateId(assigned.id)} ${assigned.label}`);
-      console.log(renderStateSummary(assigned));
-      return;
-    }
-    case "ready": {
-      const target = resolveMarkerTarget(root, args.slice(1).join(" ").trim());
-      const readyState = annotateState(root, target.id, (metadata) => ({
-        ...(metadata ?? {}),
-        status: "ready",
-      }));
-      recordWorkspaceSnapshot(root, `ready:${readyState.id}`);
-      console.log(`ready ${shortStateId(readyState.id)} ${readyState.label}`);
-      console.log(renderStateSummary(readyState));
-      return;
-    }
-    case "publish": {
-      const target = resolveMarkerTarget(root, args.slice(1).join(" ").trim());
-      const published = annotateState(root, target.id, (metadata) => ({
-        ...(metadata ?? {}),
-        status: "published",
-        publishedAt: nowIso(),
-      }));
-      recordWorkspaceSnapshot(root, `publish:${published.id}`);
-      console.log(`published ${shortStateId(published.id)} ${published.label}`);
-      console.log(renderStateSummary(published));
-      return;
-    }
-    case "handoff": {
-      const parsed = parseStateLabelAndMessage(args.slice(1).join(" "));
-      const target = resolveState(root, parsed.description);
-      const handoff = annotateState(root, target.id, (metadata) => ({
-        ...(metadata ?? {}),
-        handoff: (parsed.message ?? target.description).trim(),
-      }));
-      recordWorkspaceSnapshot(root, `handoff:${handoff.id}`);
-      console.log(`handoff recorded for ${shortStateId(handoff.id)} ${handoff.label}`);
-      console.log(renderStateSummary(handoff));
-      return;
-    }
-    case "copy-id": {
-      const target = resolveMarkerTarget(root, args.slice(1).join(" ").trim());
-      console.log(target.id);
-      return;
-    }
-    case "recent": {
-      const limit = Number.parseInt(args[1] ?? "", 10);
-      console.log(renderRecentStates(root, Number.isFinite(limit) && limit > 0 ? limit : 8));
-      return;
-    }
-    case "aliases": {
-      const subcommand = (args[1] ?? "").trim().toLowerCase();
-      if (subcommand === "add") {
-        const name = args[2] ?? "";
-        const query = args.slice(3).join(" ").trim();
-        if (name.trim().length === 0 || query.length === 0) {
-          throw new Error("Usage: jjk aliases add <name> <query>");
-        }
-        setAlias(root, name, query);
-        recordWorkspaceSnapshot(root, `aliases:add:${name}`);
-        console.log(`alias added: ${name} -> ${query}`);
-        return;
-      }
-      if (subcommand === "remove" || subcommand === "rm" || subcommand === "delete") {
-        const name = args[2] ?? "";
-        if (name.trim().length === 0) {
-          throw new Error("Usage: jjk aliases remove <name>");
-        }
-        removeAlias(root, name);
-        recordWorkspaceSnapshot(root, `aliases:remove:${name}`);
-        console.log(`alias removed: ${name}`);
-        return;
-      }
-      const aliases = Object.entries(listAliases(root));
-      if (aliases.length === 0) {
-        console.log("No aliases recorded yet.");
-        return;
-      }
-      console.log(aliases.map(([name, query]) => `${name} -> ${query}`).join("\n"));
-      return;
-    }
-    case "default-branch": {
-      const input = args.slice(1).join(" ").trim();
-      if (input.length === 0) {
-        console.log(renderConfigView(root));
-        return;
-      }
-      const normalized = normalizeBranchName(input);
-      setDefaultBranch(root, normalized);
-      recordWorkspaceSnapshot(root, `default-branch:${normalized}`);
-      console.log(`default branch set to ${normalized}`);
-      return;
-    }
-    case "config": {
-      console.log(renderConfigView(root));
-      return;
-    }
-    case "open": {
-      const target = resolveMarkerTarget(root, args.slice(1).join(" ").trim());
-      console.log(openStateFiles(root, target));
-      return;
-    }
-    case "checkpoint": {
-      await handleSave(
-        root,
-        buildSaveRequest("save", args.slice(1).join(" ").trim() || "checkpoint"),
-        {
-          allowMainBranchSave: true,
-          continuationBranch: null,
-          suppressReturnBranchFork: true,
-        },
-      );
-      return;
-    }
-    case "autosave": {
-      const subcommand = (args[1] ?? "").trim().toLowerCase();
-      if (subcommand !== "now") {
-        throw new Error("Usage: jjk autosave now");
-      }
-      if (!hasDirtyWorktree(root)) {
-        console.log("worktree clean; nothing to autosave.");
-        return;
-      }
-      await handleSave(
-        root,
-        buildSaveRequest("auto", args.slice(2).join(" ").trim() || "autosave now"),
-        {
-          allowMainBranchSave: true,
-          continuationBranch: null,
-          suppressReturnBranchFork: true,
-        },
-      );
-      return;
-    }
-    case "lock": {
-      const input = args.slice(1).join(" ").trim();
-      if (input.length === 0) {
-        throw new Error("Usage: jjk lock <branch>");
-      }
-      const branch = normalizeBranchName(input);
-      setBranchLock(root, branch, true);
-      recordWorkspaceSnapshot(root, `lock:${branch}`);
-      console.log(`locked ${branch}`);
-      return;
-    }
-    case "unlock": {
-      const input = args.slice(1).join(" ").trim();
-      if (input.length === 0) {
-        throw new Error("Usage: jjk unlock <branch>");
-      }
-      const branch = normalizeBranchName(input);
-      setBranchLock(root, branch, false);
-      recordWorkspaceSnapshot(root, `unlock:${branch}`);
-      console.log(`unlocked ${branch}`);
-      return;
-    }
-    case "clean": {
-      const aliases = listAliases(root);
-      const repo = loadRepo(root);
-      const cleanedAliases = Object.entries(aliases).filter(([, query]) => {
-        try {
-          resolveState(root, query);
-          return true;
-        } catch {
-          return false;
-        }
-      });
-      repo.settings.aliases = Object.fromEntries(cleanedAliases);
-      saveRepo(root, repo);
-      recordWorkspaceSnapshot(root, "clean");
-      console.log(`cleaned ${Object.keys(aliases).length - cleanedAliases.length} stale aliases`);
-      return;
-    }
-    case "gc": {
-      const history = loadRepo(root).currentStateHistory;
-      if (!history) {
-        console.log("nothing to gc.");
-        return;
-      }
-      recordWorkspaceSnapshot(root, "gc");
-      console.log("gc completed");
       return;
     }
     case "branch": {
@@ -1822,22 +1004,6 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       createBranchAtState(root, branch, currentState.id);
       recordWorkspaceSnapshot(root, `branch:${branch}`);
       console.log(`created branch ${branch} at ${shortStateId(currentState.id)} ${currentState.label}`);
-      return;
-    }
-    case "branch-from":
-    case "split": {
-      const rawArgs = args.slice(1);
-      if (rawArgs.length < 2) {
-        throw new Error(`Usage: jjk ${command} <state> <${command === "split" ? "new-branch" : "label"}>`);
-      }
-      const stateQuery = rawArgs.slice(0, -1).join(" ").trim();
-      const branch = normalizeBranchName(rawArgs.at(-1)!);
-      const state = resolveState(root, stateQuery);
-      const lane = command === "split"
-        ? splitState(root, state.id, branch)
-        : branchFromState(root, state.id, branch);
-      recordWorkspaceSnapshot(root, `${command}:${lane.branch}`);
-      console.log(`${command === "split" ? "split" : "branched"} ${shortStateId(state.id)} to ${lane.branch}`);
       return;
     }
     case "checkout": {
@@ -1936,15 +1102,6 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       console.log(renderStateSummary(stashed.state));
       return;
     }
-    case "note": {
-      const parsed = splitNoteArgs(args.slice(1).join(" "));
-      const target = resolveState(root, parsed.state);
-      const noted = noteState(root, target.id, parsed.message);
-      recordWorkspaceSnapshot(root, `note:${noted.id}`);
-      console.log(`noted ${shortStateId(noted.id)} ${noted.label}`);
-      console.log(renderStateSummary(noted));
-      return;
-    }
     case "nice":
       await handleSave(
         root,
@@ -1954,205 +1111,43 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
         },
       );
       return;
-    case "inspect": {
-      const query = args.slice(1).join(" ").trim();
-      if (query.length === 0) {
-        throw new Error("Usage: jjk inspect <state>");
-      }
-
-      const repo = loadRepo(root);
-      const state = resolveState(root, query, { includeDeleted: true });
-      console.log(renderStateInspection(repo, state));
-      return;
-    }
-    case "search": {
-      const query = args.slice(1).join(" ").trim();
-      if (query.length === 0) {
-        throw new Error("Usage: jjk search <query>");
-      }
-
-      const repo = loadRepo(root);
-      const matches = findStateMatches(repo.states, query);
-      if (matches.length === 0) {
-        console.log(`No states matched \`${query}\`.`);
-        return;
-      }
-
-      console.log(`Search results for \`${query}\`:`);
-      console.log(renderStateChoiceTable(matches.map((match) => match.state), { colorize: shouldColorizeOutput() }));
-      return;
-    }
     case "see": {
-      const filters = parseStateViewFilters(args.slice(1));
       const repo = loadRepo(root);
       const colorize = shouldColorizeOutput();
-      const visibleStates = filterStatesForView(
-        listStates(root, { includeDeleted: filters.includeDeleted }),
-        filters,
-      );
-      if (visibleStates.length === 0) {
-        console.log("No states matched the selected filters.");
-        return;
-      }
-
-      const filteredRepo = { ...repo, states: visibleStates };
+      const includeDeleted = args.includes("--deleted");
       const currentState = resolveCurrentState(root, repo.states);
-      const currentStateId = currentState && visibleStates.some((state) => state.id === currentState.id)
-        ? currentState.id
-        : null;
-      console.log(renderGraph(filteredRepo, {
-        currentStateId,
+      console.log(renderGraph(repo, {
+        currentStateId: currentState?.id ?? null,
         colorize,
-        includeDeleted: filters.includeDeleted,
+        includeDeleted,
       }));
       console.log("");
       console.log(
-        renderStateTable(visibleStates, {
-          colorize,
-          currentStateId,
-          repo: filteredRepo,
-          includeDeleted: filters.includeDeleted,
-        }),
-      );
-      return;
-    }
-    case "log": {
-      const query = args.slice(1).join(" ").trim();
-      if (query.length === 0) {
-        throw new Error("Usage: jjk log <branch>");
-      }
-      const repo = loadRepo(root);
-      const branch = resolveBranchName(root, query);
-      const branchStates = repo.states.filter(
-        (state) => !isDeletedState(state) && stateDisplayBranch(state) === branch,
-      );
-      const branchRepo: RepoData = {
-        ...repo,
-        states: branchStates,
-      };
-      const currentState = branchStates[branchStates.length - 1] ?? null;
-      console.log(renderLogGraph(branchRepo, {
-        currentStateId: currentState?.id ?? null,
-        colorize: shouldColorizeOutput(),
-        includeDeleted: false,
-      }));
-      return;
-    }
-    case "graph": {
-      const filters = parseStateViewFilters(args.slice(1), { allowBranch: true });
-      const repo = loadRepo(root);
-      const colorize = shouldColorizeOutput();
-      if (filters.branch) {
-        filters.branch = resolveBranchQuery(root, filters.branch);
-      }
-      const visibleStates = filterStatesForView(
-        listStates(root, { includeDeleted: filters.includeDeleted }),
-        filters,
-      );
-      if (visibleStates.length === 0) {
-        console.log("No states matched the selected filters.");
-        return;
-      }
-
-      const filteredRepo = { ...repo, states: visibleStates };
-      const currentState = resolveCurrentState(root, repo.states);
-      const currentStateId = currentState && visibleStates.some((state) => state.id === currentState.id)
-        ? currentState.id
-        : null;
-      console.log(renderLogGraph(filteredRepo, {
-        currentStateId,
-        colorize,
-        includeDeleted: filters.includeDeleted,
-      }));
-      return;
-    }
-    case "timeline": {
-      const repo = loadRepo(root);
-      const colorize = shouldColorizeOutput();
-      const currentState = resolveCurrentState(root, repo.states);
-      const states = listStates(root);
-      console.log(
-        renderStateTable(states, {
+        renderStateTable(listStates(root, { includeDeleted }), {
           colorize,
           currentStateId: currentState?.id ?? null,
           repo,
+          includeDeleted,
         }),
       );
       return;
     }
-    case "favorites": {
+    case "graph": {
       const repo = loadRepo(root);
       const colorize = shouldColorizeOutput();
-      const states = listStates(root).filter((state) => stateHasStar(state));
-      if (states.length === 0) {
-        console.log("No starred states yet.");
-        return;
-      }
+      const includeDeleted = args.includes("--deleted");
       const currentState = resolveCurrentState(root, repo.states);
-      const currentStateId = currentState && states.some((state) => state.id === currentState.id)
-        ? currentState.id
-        : null;
-      console.log(
-        renderStateTable(states, {
-          colorize,
-          currentStateId,
-          repo,
-        }),
-      );
+      console.log(renderLogGraph(repo, {
+        currentStateId: currentState?.id ?? null,
+        colorize,
+        includeDeleted,
+      }));
       return;
     }
-    case "amend": {
-      const currentState = resolveCurrentState(root, loadRepo(root).states);
-      if (!currentState) {
-        throw new Error("No current state is available.");
-      }
-
-      const amendment = parseStateLabelAndMessage(args.slice(1).join(" "));
-      const amended = amendState(root, currentState.id, {
-        description: amendment.description || currentState.description,
-        label: amendment.label,
-        message: amendment.message,
-      });
-      syncCurrentStateHistory(root, amended.id);
-      recordWorkspaceSnapshot(root, `amend:${amended.id}`);
-      console.log(`amended ${shortStateId(amended.id)} ${amended.label}`);
-      console.log(renderStateSummary(amended));
-      return;
-    }
-    case "show":
-    case "patch": {
-      const atomicChain = args.includes("--atomic-chain");
-      const query = args.slice(1).filter((arg) => arg !== "--atomic-chain").join(" ").trim();
-      const state = query.length > 0 ? resolveState(root, query) : resolveDefaultState(root);
-      console.log(atomicChain ? renderAtomicChain(root, state) : renderAtomicStateDiff(root, state));
-      return;
-    }
-    case "files": {
+    case "show": {
       const query = args.slice(1).join(" ").trim();
       const state = query.length > 0 ? resolveState(root, query) : resolveDefaultState(root);
-      console.log(renderStateFiles(root, state));
-      return;
-    }
-    case "touched": {
-      const query = args.slice(1).join(" ").trim();
-      if (query.length === 0) {
-        throw new Error("Usage: jjk touched <branch>");
-      }
-      console.log(renderTouchedFiles(root, query));
-      return;
-    }
-    case "move": {
-      const rawArgs = args.slice(1);
-      if (rawArgs.length < 2) {
-        throw new Error("Usage: jjk move <state> <branch>");
-      }
-      const stateQuery = rawArgs.slice(0, -1).join(" ").trim();
-      const branch = normalizeBranchName(rawArgs.at(-1)!);
-      const state = resolveState(root, stateQuery);
-      const moved = moveState(root, state.id, branch);
-      recordWorkspaceSnapshot(root, `move:${moved.id}`);
-      console.log(`moved ${shortStateId(moved.id)} to ${branch}`);
-      console.log(renderStateSummary(moved));
+      console.log(renderAtomicStateDiff(root, state));
       return;
     }
     case "git": {
@@ -2194,54 +1189,6 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
           historyLength: history.entries.length,
         }),
       );
-      return;
-    }
-    case "heads": {
-      console.log(renderBranchHeads(root));
-      return;
-    }
-    case "root": {
-      const query = args.slice(1).join(" ").trim();
-      if (query.length === 0) {
-        throw new Error("Usage: jjk root <state>");
-      }
-      const state = resolveState(root, query);
-      const trail = collectStateTrail(root, state);
-      console.log(renderStateSummary(trail[0] ?? state));
-      return;
-    }
-    case "trail": {
-      const query = args.slice(1).join(" ").trim();
-      if (query.length === 0) {
-        throw new Error("Usage: jjk trail <state>");
-      }
-      const state = resolveState(root, query);
-      console.log(renderStateTrail(collectStateTrail(root, state)));
-      return;
-    }
-    case "children": {
-      const query = args.slice(1).join(" ").trim();
-      if (query.length === 0) {
-        throw new Error("Usage: jjk children <state>");
-      }
-      const state = resolveState(root, query);
-      const children = listStates(root).filter(
-        (candidate) => candidate.parentStateId === state.id,
-      );
-      console.log(renderStateList(children));
-      return;
-    }
-    case "parents": {
-      const query = args.slice(1).join(" ").trim();
-      if (query.length === 0) {
-        throw new Error("Usage: jjk parents <state>");
-      }
-      const state = resolveState(root, query);
-      const repo = loadRepo(root);
-      const parent = state.parentStateId
-        ? repo.states.find((candidate) => candidate.id === state.parentStateId && !isDeletedState(candidate))
-        : null;
-      console.log(parent ? renderStateSummary(parent) : "No parent state is available.");
       return;
     }
     case "status": {
@@ -2368,27 +1315,6 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       );
       return;
     }
-    case "compare-branch": {
-      const branchA = args[1] ?? "";
-      const branchB = args[2] ?? "";
-      if (branchA.trim().length === 0 || branchB.trim().length === 0) {
-        throw new Error("Usage: jjk compare-branch <a> <b>");
-      }
-
-      const stateA = resolveLatestStateForBranch(root, branchA);
-      const stateB = resolveLatestStateForBranch(root, branchB);
-      console.log(`branch a: ${renderStateSummary(stateA)}`);
-      console.log(`branch b: ${renderStateSummary(stateB)}`);
-      console.log("");
-      console.log(
-        runGitTextCommand(
-          root,
-          ["diff", stateA.commit, stateB.commit],
-          "No diff between the selected branch tips.",
-        ),
-      );
-      return;
-    }
     case "pick": {
       const query = args.slice(1).join(" ").trim();
       if (query.length === 0) {
@@ -2431,68 +1357,6 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       recordWorkspaceSnapshot(root, `pick:${picked.state.id}`);
       return;
     }
-    case "replay": {
-      const sourceQuery = args[1] ?? "";
-      const ontoIndex = args.findIndex((arg) => arg === "onto");
-      const branchQuery = ontoIndex >= 0 ? args.slice(ontoIndex + 1).join(" ").trim() : "";
-      if (sourceQuery.length === 0 || branchQuery.length === 0) {
-        throw new Error("Usage: jjk replay <state> onto <branch>");
-      }
-
-      const sourceState = resolveState(root, sourceQuery);
-      applyStateReplay(root, sourceState, branchQuery, "replay");
-      return;
-    }
-    case "merge-state": {
-      const sourceQuery = args[1] ?? "";
-      const intoIndex = args.findIndex((arg) => arg === "into");
-      const branchQuery = intoIndex >= 0 ? args.slice(intoIndex + 1).join(" ").trim() : "";
-      if (sourceQuery.length === 0 || branchQuery.length === 0) {
-        throw new Error("Usage: jjk merge-state <state> into <branch>");
-      }
-
-      const sourceState = resolveState(root, sourceQuery);
-      applyStateReplay(root, sourceState, branchQuery, "merge-state");
-      return;
-    }
-    case "revert-state": {
-      const query = args.slice(1).join(" ").trim();
-      if (query.length === 0) {
-        throw new Error("Usage: jjk revert-state <state>");
-      }
-
-      const sourceState = resolveState(root, query);
-      if (hasDirtyWorktree(root)) {
-        saveState(root, {
-          kind: "auto",
-          description: `auto pre-revert checkpoint before ${sourceState.id}`,
-        });
-      }
-
-      const reverted = revertStateChanges(root, sourceState.commit, sourceState.parentCommit);
-      if (!reverted) {
-        console.log(`revert produced no changes for ${sourceState.id}`);
-        return;
-      }
-
-      const currentState = resolveCurrentState(root, loadRepo(root).states);
-      const result = saveState(root, {
-        kind: "save",
-        description: `revert ${sourceState.id} ${sourceState.label}`,
-        label: `revert_${branchSegment(sourceState.label)}`,
-        metadata: {
-          ...(currentState?.id ? { base: currentState.id } : {}),
-          cherry: sourceState.id,
-        },
-      }, {
-        suppressReturnBranchFork: true,
-      });
-      syncCurrentStateHistory(root, result.state.id);
-      recordWorkspaceSnapshot(root, `revert-state:${result.state.id}`);
-      console.log(`reverted ${shortStateId(sourceState.id)} on ${getCurrentBranch(root)}`);
-      console.log(renderStateSummary(result.state));
-      return;
-    }
     case "promote": {
       const query = args[1] ?? "";
       const targetKind = args[2] as "nice" | "star" | undefined;
@@ -2523,23 +1387,6 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       await handleReturn(root, args.slice(1).join(" "));
       recordWorkspaceSnapshot(root, `return:${resolveCurrentState(root, loadRepo(root).states)?.id ?? "unknown"}`);
       return;
-    case "continue": {
-      const currentState = resolveCurrentState(root, loadRepo(root).states);
-      if (!currentState) {
-        throw new Error("No current state is available.");
-      }
-      const branch = stateDisplayBranch(currentState);
-      const latest = resolveLatestStateForBranch(root, branch);
-      if (stateDisplayBranch(latest) === "main") {
-        updateBranchTarget(root, "main", latest.id);
-        syncCurrentStateHistory(root, latest.id);
-        console.log(`continued to ${shortStateId(latest.id)} on main`);
-      } else {
-        console.log(activateState(root, latest, "continued"));
-      }
-      recordWorkspaceSnapshot(root, `continue:${latest.id}`);
-      return;
-    }
     case "lastest":
     case "latest": {
       const query = args.slice(1).join(" ").trim();
@@ -2590,23 +1437,6 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       recordWorkspaceSnapshot(root, `down:${target.id}`);
       return;
     }
-    case "prev": {
-      const repo = loadRepo(root);
-      const currentState = resolveCurrentState(root, repo.states);
-      if (!currentState?.parentStateId) {
-        throw new Error("No parent state is available.");
-      }
-      const target = resolveState(root, currentState.parentStateId);
-      console.log(activateState(root, target, "prev"));
-      recordWorkspaceSnapshot(root, `prev:${target.id}`);
-      return;
-    }
-    case "next": {
-      const target = await resolveChildState(root);
-      console.log(activateState(root, target, "next"));
-      recordWorkspaceSnapshot(root, `next:${target.id}`);
-      return;
-    }
     case "update": {
       const branchQuery = args[1] ?? "";
       const stateQuery = args.slice(2).join(" ").trim();
@@ -2625,32 +1455,6 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       syncCurrentStateHistory(root, resolveCurrentState(root, loadRepo(root).states)?.id ?? null);
       recordWorkspaceSnapshot(root, `update:${updated.branch}`);
       console.log(`updated ${updated.branch} to ${targetLabel}`);
-      return;
-    }
-    case "rename-branch": {
-      const rawArgs = args.slice(1);
-      if (rawArgs.length < 2) {
-        throw new Error("Usage: jjk rename-branch <old> <new>");
-      }
-      const oldBranchQuery = rawArgs.slice(0, -1).join(" ").trim();
-      const newBranch = normalizeBranchName(rawArgs.at(-1)!);
-      const renamed = renameBranch(root, oldBranchQuery, newBranch);
-      recordWorkspaceSnapshot(root, `rename-branch:${renamed.branch}`);
-      console.log(`renamed branch to ${renamed.branch}`);
-      return;
-    }
-    case "rename-state": {
-      const rawArgs = args.slice(1);
-      if (rawArgs.length < 2) {
-        throw new Error("Usage: jjk rename-state <state> <new-label>");
-      }
-      const stateQuery = rawArgs.slice(0, -1).join(" ").trim();
-      const nextLabel = rawArgs.at(-1)!;
-      const state = resolveState(root, stateQuery);
-      const renamed = renameState(root, state.id, nextLabel);
-      recordWorkspaceSnapshot(root, `rename-state:${renamed.id}`);
-      console.log(`renamed ${shortStateId(renamed.id)} to ${renamed.label}`);
-      console.log(renderStateSummary(renamed));
       return;
     }
     case "watch": {
@@ -2788,68 +1592,22 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       console.log(renderTimeshifts(listTimeshifts(root)));
       return;
     }
-    case "backups": {
-      console.log(renderBackupsList(root));
-      return;
-    }
-    case "snapshot-log": {
-      console.log(renderSnapshotLog(root));
-      return;
-    }
-    case "restore":
-    case "load":
     case "backup": {
-      if (command === "backup") {
-        const label = args.slice(1).join(" ").trim();
-        const path = createBackup(root, label || undefined);
-        const size = statSync(path).size;
-        console.log(`backup saved: ${formatRelativePath(root, path)} (${formatFileSize(size)})`);
-        return;
-      }
-
-      const restoreArgs = args.slice(1).filter((arg) => arg !== "--preview");
-      const query = restoreArgs.join(" ").trim();
+      const label = args.slice(1).join(" ").trim();
+      const path = createBackup(root, label || undefined);
+      const size = statSync(path).size;
+      console.log(`backup saved: ${formatRelativePath(root, path)} (${formatFileSize(size)})`);
+      return;
+    }
+    case "load": {
+      const query = args.slice(1).join(" ").trim();
       if (query.length === 0) {
         throw new Error("Usage: jjk load <backupfile>");
       }
-
-      const preview = command === "restore" && args.includes("--preview");
-      if (preview) {
-        const path = resolveBackupPath(root, query);
-        const snapshot = JSON.parse(readFileSync(path, "utf8"));
-        console.log(renderBackupSummary(root, path, snapshot));
-        return;
-      }
-
       recordWorkspaceSnapshot(root, `before-load:${query}`);
       const loaded = loadBackup(root, query);
       recordWorkspaceSnapshot(root, `load:${loaded.path}`);
       console.log(`loaded backup: ${formatRelativePath(root, loaded.path)}`);
-      return;
-    }
-    case "export": {
-      const stateQuery = args[1] ?? "";
-      const outputPath = args[2] ?? "";
-      if (stateQuery.length === 0 || outputPath.length === 0) {
-        throw new Error("Usage: jjk export <state> <file>");
-      }
-
-      const state = resolveState(root, stateQuery);
-      const path = createBackup(root, outputPath);
-      const size = statSync(path).size;
-      console.log(`exported ${shortStateId(state.id)} to ${formatRelativePath(root, path)} (${formatFileSize(size)})`);
-      return;
-    }
-    case "import": {
-      const path = args.slice(1).join(" ").trim();
-      if (path.length === 0) {
-        throw new Error("Usage: jjk import <file>");
-      }
-
-      recordWorkspaceSnapshot(root, `before-import:${path}`);
-      const loaded = loadBackup(root, path);
-      recordWorkspaceSnapshot(root, `import:${loaded.path}`);
-      console.log(`imported backup: ${formatRelativePath(root, loaded.path)}`);
       return;
     }
     default:
