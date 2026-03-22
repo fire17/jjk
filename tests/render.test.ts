@@ -617,6 +617,7 @@ describe("renderGraph", () => {
 
     const table = renderStateTable(repo.states, { repo });
     expect(table).toContain("cherry_purple");
+    expect(table).toContain("datetime");
     expect(table).toContain("base1111");
     expect(table).toContain("source99");
   });
@@ -692,7 +693,11 @@ describe("renderGraph", () => {
     };
 
     const lines = renderStateTable(repo.states, { repo }).split("\n");
+    expect(lines[0]).toContain("datetime");
     expect(lines[1]?.indexOf("base1111")).toBe(lines[2]?.indexOf("base2222"));
     expect(lines[1]?.indexOf("src11111")).toBe(lines[2]?.indexOf("src22222"));
+    expect(lines[1]?.indexOf("Mar 22, 2026")).toBeGreaterThan(lines[1]?.indexOf("src11111") ?? -1);
+    expect(lines[2]?.indexOf("Mar 22, 2026")).toBeGreaterThan(lines[2]?.indexOf("src22222") ?? -1);
+    expect(lines[1]?.indexOf("Mar 22, 2026")).toBe(lines[2]?.indexOf("Mar 22, 2026"));
   });
 });

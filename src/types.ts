@@ -1,6 +1,7 @@
 export type StateKind =
   | "new"
   | "save"
+  | "stash"
   | "cherry"
   | "step"
   | "nice"
@@ -18,6 +19,17 @@ export interface StateMetadata {
   message?: string;
   base?: string;
   cherry?: string;
+  stashFromBranch?: string;
+  stashFromStateId?: string;
+  deletedAt?: string;
+  deletedBranch?: string;
+  deletedLocation?: {
+    branch: string;
+    lane: string;
+    continuationBranch?: string | null;
+    parentStateId: string | null;
+    wasLaneCurrent: boolean;
+  };
   priorContexts?: Array<{
     branch: string;
     lane: string;

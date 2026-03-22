@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
@@ -38,6 +39,8 @@ import {
 } from "./render";
 import {
   createLane,
+  deleteState,
+  eraseState,
   initSafeSpace,
   JJK_DIR,
   listLanes,
@@ -45,22 +48,27 @@ import {
   listTimeshifts,
   loadRepo,
   promoteState,
+  recoverState,
   recordFreeze,
   rememberTimeshift,
   requireSafeSpace,
   resolveLane,
+  resolveLatestStateForBranch,
   resolveState,
   resolveTimeshift,
-  updateBranchTarget,
   saveState,
   saveRepo,
   isTipStateOnBranch,
+  starState,
+  stashWorkspace,
+  updateBranchTarget,
 } from "./store";
 import type { MapHit, RepoData, SaveStateRequest, StateRecord } from "./types";
 import {
   branchSegment,
   continuationBranchName,
   formatRelativePath,
+  isDeletedState,
   nowIso,
   parseStateLabelAndMessage,
   shortStateId,
@@ -86,12 +94,18 @@ States:
   jjk step [description]
   jjk nice [description]
   jjk star [description]
-  jjk see
+  jjk stash [description]
+  jjk see [--deleted]
+  jjk show [state]
   jjk story
-  jjk diff [state] [state]
+  jjk diff [--atomic] [state] [state]
+  jjk delete <state>
+  jjk recover <deleted-state>
+  jjk undo [-rm] [-y]
   jjk pick <state>
   jjk promote <state> <nice|star>
   jjk return <state>
+  jjk lastest <branch>
   jjk return -
   jjk back
   jjk forward
@@ -128,6 +142,19 @@ async function promptForState(states: StateRecord[]): Promise<StateRecord> {
   return states[index];
 }
 
+async function confirmAction(prompt: string): Promise<void> {
+  if (!process.stdin.isTTY) {
+    throw new Error("Confirmation required. Re-run with `-y` or `-rm` to skip the prompt.");
+  }
+
+  const rl = createInterface({ input: stdin, output: stdout });
+  const answer = await rl.question(`${prompt} [y/N]: `);
+  rl.close();
+  if (!/^y(es)?$/i.test(answer.trim())) {
+    throw new Error("Cancelled.");
+  }
+}
+
 async function handleSave(
   root: string,
   request: SaveStateRequest,
@@ -161,6 +188,68 @@ function shouldColorizeOutput(): boolean {
   return Boolean(process.stdout.isTTY) && process.env.NO_COLOR === undefined;
 }
 
+const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+function runGitTextCommand(root: string, args: string[], emptyMessage: string): string {
+  const proc = Bun.spawnSync(["git", ...args], {
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const output = proc.stdout.toString().trim();
+  if (proc.exitCode !== 0 && proc.exitCode !== 1) {
+    const details = [proc.stderr.toString().trim(), output].filter(Boolean).join("\n");
+    throw new Error(details.length > 0 ? details : `git ${args.join(" ")} failed`);
+  }
+  return output.length > 0 ? output : emptyMessage;
+}
+
+function resolveDefaultState(root: string): StateRecord {
+  const repo = loadRepo(root);
+  const currentState = resolveCurrentState(root, repo.states) ?? repo.states[repo.states.length - 1] ?? null;
+  if (!currentState) {
+    throw new Error("No state is available.");
+  }
+  return currentState;
+}
+
+function getAtomicBaseCommit(state: StateRecord): string {
+  return state.parentCommit ?? EMPTY_TREE;
+}
+
+function renderAtomicStateDiff(root: string, state: StateRecord): string {
+  return runGitTextCommand(
+    root,
+    ["diff", getAtomicBaseCommit(state), state.commit],
+    "No changes captured in the selected state.",
+  );
+}
+
+function compareAtomicStates(root: string, stateA: StateRecord, stateB: StateRecord): string {
+  const patchA = runGitTextCommand(root, ["diff", getAtomicBaseCommit(stateA), stateA.commit], "");
+  const patchB = runGitTextCommand(root, ["diff", getAtomicBaseCommit(stateB), stateB.commit], "");
+
+  if (patchA.trim() === patchB.trim()) {
+    return "No diff between selected atomic state changes.";
+  }
+
+  const tempRoot = mkdtempSync(join(tmpdir(), "jjk-atomic-diff-"));
+  const fileA = join(tempRoot, `${branchSegment(stateA.label || stateA.id)}.patch`);
+  const fileB = join(tempRoot, `${branchSegment(stateB.label || stateB.id)}.patch`);
+  writeFileSync(fileA, `${patchA}\n`);
+  writeFileSync(fileB, `${patchB}\n`);
+
+  try {
+    return runGitTextCommand(
+      root,
+      ["diff", "--no-index", "--", fileA, fileB],
+      "No diff between selected atomic state changes.",
+    );
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
+
 function stateMatchesWorkspace(
   state: StateRecord,
   branchName: string | null,
@@ -178,28 +267,29 @@ function stateMatchesWorkspace(
 }
 
 function resolveCurrentState(root: string, states: StateRecord[]): StateRecord | null {
+  const visibleStates = states.filter((state) => !isDeletedState(state));
   const branchName = getCurrentBranchName(root);
   const headCommit = getHeadCommit(root);
   const repo = loadRepo(root);
   const historyStateId = getCurrentStateHistoryEntry(repo);
 
   if (historyStateId) {
-    const historyState = states.find((state) => state.id === historyStateId) ?? null;
+    const historyState = visibleStates.find((state) => state.id === historyStateId) ?? null;
     if (historyState && stateMatchesWorkspace(historyState, branchName, headCommit)) {
       return historyState;
     }
   }
 
   if (headCommit) {
-    for (let index = states.length - 1; index >= 0; index -= 1) {
-      const state = states[index];
+    for (let index = visibleStates.length - 1; index >= 0; index -= 1) {
+      const state = visibleStates[index];
       if (state && stateMatchesWorkspace(state, branchName, headCommit)) {
         return state;
       }
     }
 
-    for (let index = states.length - 1; index >= 0; index -= 1) {
-      const state = states[index];
+    for (let index = visibleStates.length - 1; index >= 0; index -= 1) {
+      const state = visibleStates[index];
       if (state && state.commit === headCommit) {
         return state;
       }
@@ -207,12 +297,12 @@ function resolveCurrentState(root: string, states: StateRecord[]): StateRecord |
   }
 
   if (historyStateId) {
-    return states.find((state) => state.id === historyStateId) ?? null;
+    return visibleStates.find((state) => state.id === historyStateId) ?? null;
   }
 
   const branch = branchName ?? getCurrentBranch(root);
   const laneName = repo.branchLaneMap[branch];
-  return laneName ? states.find((state) => state.id === repo.lanes[laneName]?.currentStateId) ?? null : null;
+  return laneName ? visibleStates.find((state) => state.id === repo.lanes[laneName]?.currentStateId) ?? null : null;
 }
 
 function getCurrentStateHistoryEntry(repo: RepoData): string | null {
@@ -318,7 +408,7 @@ async function resolveChildState(root: string): Promise<StateRecord> {
     throw new Error("No current state is available.");
   }
 
-  const children = repo.states.filter((state) => state.parentStateId === currentState.id);
+  const children = repo.states.filter((state) => state.parentStateId === currentState.id && !isDeletedState(state));
   if (children.length === 0) {
     throw new Error(`No child states are available from ${shortStateId(currentState.id)}.`);
   }
@@ -494,6 +584,9 @@ async function handleReturn(root: string, query: string): Promise<void> {
 
   if (query.trim().length > 0) {
     const matches = repo.states.filter((candidate) => {
+      if (isDeletedState(candidate)) {
+        return false;
+      }
       const haystack = [
         candidate.id,
         candidate.label,
@@ -511,6 +604,39 @@ async function handleReturn(root: string, query: string): Promise<void> {
   }
 
   console.log(activateState(root, state));
+}
+
+function resolveUndoFallbackState(root: string, stateId: string): StateRecord | null {
+  const repo = loadRepo(root);
+  const history = repo.currentStateHistory ?? { entries: [], index: -1 };
+  for (let index = history.index - 1; index >= 0; index -= 1) {
+    const candidate = repo.states.find((state) => state.id === history.entries[index] && !isDeletedState(state));
+    if (candidate && candidate.id !== stateId) {
+      return candidate;
+    }
+  }
+
+  const source = repo.states.find((state) => state.id === stateId) ?? null;
+  if (source?.parentStateId) {
+    const parent = repo.states.find((state) => state.id === source.parentStateId && !isDeletedState(state));
+    if (parent) {
+      return parent;
+    }
+  }
+
+  return repo.states
+    .slice()
+    .reverse()
+    .find((state) => state.id !== stateId && !isDeletedState(state)) ?? null;
+}
+
+function syncBranchAfterUndo(root: string, state: StateRecord): StateRecord {
+  const branchQuery = stateDisplayBranch(state);
+  const latestState = resolveLatestStateForBranch(root, branchQuery);
+  const updated = updateBranchTarget(root, branchQuery, latestState.id);
+  const currentStateId = updated.state?.id ?? latestState.id;
+  syncCurrentStateHistory(root, currentStateId);
+  return updated.state ?? latestState;
 }
 
 export async function runCli(argv: string[], cwd: string): Promise<void> {
@@ -560,9 +686,33 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       );
       return;
     case "step":
-    case "star":
       await handleSave(root, buildSaveRequest(command, args.slice(1).join(" ")));
       return;
+    case "star": {
+      const input = args.slice(1).join(" ").trim();
+      if (input.length > 0) {
+        try {
+          const target = resolveState(root, input);
+          const starred = starState(root, target.id);
+          console.log(`starred ${shortStateId(starred.id)} ${starred.label}`);
+          console.log(renderStateSummary(starred));
+          return;
+        } catch (error) {
+          if (!(error instanceof Error) || !error.message.startsWith("No state matched")) {
+            throw error;
+          }
+        }
+      }
+      await handleSave(root, buildSaveRequest(command, args.slice(1).join(" ")));
+      return;
+    }
+    case "stash": {
+      const parsed = parseStateLabelAndMessage(args.slice(1).join(" "));
+      const stashed = stashWorkspace(root, parsed);
+      console.log(`stashed changes into ${stateDisplayBranch(stashed.state)}`);
+      console.log(renderStateSummary(stashed.state));
+      return;
+    }
     case "nice":
       await handleSave(
         root,
@@ -575,16 +725,28 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
     case "see": {
       const repo = loadRepo(root);
       const colorize = shouldColorizeOutput();
+      const includeDeleted = args.includes("--deleted");
       const currentState = resolveCurrentState(root, repo.states);
-      console.log(renderGraph(repo, { currentStateId: currentState?.id ?? null, colorize }));
+      console.log(renderGraph(repo, {
+        currentStateId: currentState?.id ?? null,
+        colorize,
+        includeDeleted,
+      }));
       console.log("");
       console.log(
-        renderStateTable(listStates(root), {
+        renderStateTable(listStates(root, { includeDeleted }), {
           colorize,
           currentStateId: currentState?.id ?? null,
           repo,
+          includeDeleted,
         }),
       );
+      return;
+    }
+    case "show": {
+      const query = args.slice(1).join(" ").trim();
+      const state = query.length > 0 ? resolveState(root, query) : resolveDefaultState(root);
+      console.log(renderAtomicStateDiff(root, state));
       return;
     }
     case "story":
@@ -616,7 +778,8 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       const repo = loadRepo(root);
       const branch = getCurrentBranch(root);
       const laneName = repo.branchLaneMap[branch];
-      const latestState = repo.states.length > 0 ? repo.states[repo.states.length - 1] : null;
+      const visibleStates = listStates(root);
+      const latestState = visibleStates.length > 0 ? visibleStates[visibleStates.length - 1] : null;
       console.log(
         renderStatus({
           root,
@@ -633,56 +796,114 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       );
       return;
     }
+    case "delete": {
+      const query = args.slice(1).join(" ").trim();
+      if (query.length === 0) {
+        throw new Error("Provide a state to delete.");
+      }
+      const currentState = resolveCurrentState(root, loadRepo(root).states);
+      const state = resolveState(root, query);
+      const fallback = currentState?.id === state.id ? resolveUndoFallbackState(root, state.id) : null;
+      const deleted = deleteState(root, state.id);
+      console.log(`deleted ${shortStateId(deleted.id)} to ${deleted.metadata?.deletedBranch}`);
+      if (fallback) {
+        console.log(activateState(root, fallback, "returned"));
+      }
+      return;
+    }
+    case "recover": {
+      const query = args.slice(1).join(" ").trim();
+      if (query.length === 0) {
+        throw new Error("Provide a deleted state to recover.");
+      }
+      const state = resolveState(root, query, { includeDeleted: true });
+      const recovered = recoverState(root, state.id);
+      console.log(`recovered ${shortStateId(recovered.id)} to ${stateDisplayBranch(recovered)}`);
+      console.log(renderStateSummary(recovered));
+      return;
+    }
+    case "undo": {
+      const removeState = args.includes("-rm");
+      const skipConfirm = args.includes("-y");
+      const currentState = resolveCurrentState(root, loadRepo(root).states);
+      if (!currentState) {
+        throw new Error("No current state is available.");
+      }
+
+      const fallback = resolveUndoFallbackState(root, currentState.id);
+      if (!fallback) {
+        throw new Error("No earlier state is available to return to after undo.");
+      }
+
+      if (!removeState && currentState.stats.changedFiles > 0) {
+        const branchQuery = getCurrentBranchName(root) ?? stateDisplayBranch(currentState);
+        const updated = updateBranchTarget(root, branchQuery, fallback.id);
+        const synced = syncBranchAfterUndo(root, updated.state ?? fallback);
+        console.log(`undid to ${shortStateId(synced.id)} ${synced.label}`);
+        return;
+      }
+
+      if (!skipConfirm && currentState.stats.changedFiles > 0) {
+        await confirmAction(`Undo creation of ${shortStateId(currentState.id)} ${currentState.label}?`);
+      }
+
+      const erased = eraseState(root, currentState.id);
+      console.log(`erased ${shortStateId(erased.id)} ${erased.label}`);
+      console.log(activateState(root, fallback, "returned"));
+      syncBranchAfterUndo(root, fallback);
+      return;
+    }
     case "diff": {
-      const queryA = args[1] ?? "";
-      const queryB = args[2] ?? "";
+      const atomic = args.includes("--atomic");
+      const diffArgs = args.slice(1).filter((arg) => arg !== "--atomic");
+      const queryA = diffArgs[0] ?? "";
+      const queryB = diffArgs[1] ?? "";
 
       if (queryA.length === 0) {
-        const repo = loadRepo(root);
-        const currentState = resolveCurrentState(root, repo.states) ??
-          repo.states[repo.states.length - 1];
-        if (!currentState) {
-          throw new Error("No state is available to diff against.");
+        if (atomic) {
+          console.log(renderAtomicStateDiff(root, resolveDefaultState(root)));
+          return;
         }
-        const result = Bun.spawnSync(
-          ["git", "diff", "--stat", currentState.commit],
-          {
-            cwd: root,
-            stdout: "pipe",
-            stderr: "pipe",
-          },
+        const currentState = resolveDefaultState(root);
+        console.log(
+          runGitTextCommand(
+            root,
+            ["diff", currentState.commit],
+            "No diff against the latest saved state.",
+          ),
         );
-        const output = result.stdout.toString().trim();
-        console.log(output.length > 0 ? output : "No diff against the latest saved state.");
         return;
       }
 
       const stateA = resolveState(root, queryA);
       if (queryB.length === 0) {
-        const result = Bun.spawnSync(
-          ["git", "diff", "--stat", stateA.commit],
-          {
-            cwd: root,
-            stdout: "pipe",
-            stderr: "pipe",
-          },
+        const currentState = resolveDefaultState(root);
+        if (atomic) {
+          console.log(compareAtomicStates(root, currentState, stateA));
+          return;
+        }
+        console.log(
+          runGitTextCommand(
+            root,
+            ["diff", currentState.commit, stateA.commit],
+            "No diff against the selected state.",
+          ),
         );
-        const output = result.stdout.toString().trim();
-        console.log(output.length > 0 ? output : "No diff against the selected state.");
         return;
       }
 
       const stateB = resolveState(root, queryB);
-      const result = Bun.spawnSync(
-        ["git", "diff", "--stat", stateA.commit, stateB.commit],
-        {
-          cwd: root,
-          stdout: "pipe",
-          stderr: "pipe",
-        },
+      if (atomic) {
+        console.log(compareAtomicStates(root, stateA, stateB));
+        return;
+      }
+      console.log(
+        runGitTextCommand(
+          root,
+          ["diff", stateA.commit, stateB.commit],
+          "No diff between the selected states.",
+        ),
       );
-      const output = result.stdout.toString().trim();
-      console.log(output.length > 0 ? output : "No diff between the selected states.");
       return;
     }
     case "pick": {
@@ -754,6 +975,15 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
     case "return":
       await handleReturn(root, args.slice(1).join(" "));
       return;
+    case "lastest":
+    case "latest": {
+      const query = args.slice(1).join(" ").trim();
+      if (query.length === 0) {
+        throw new Error("Usage: jjk lastest <branch>");
+      }
+      console.log(renderStateSummary(resolveLatestStateForBranch(root, query)));
+      return;
+    }
     case "back":
       {
         const target = resolveHistoryState(root, -1);

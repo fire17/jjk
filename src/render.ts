@@ -2,9 +2,11 @@ import type { LaneRecord, MapHit, RepoData, StateRecord, TimeshiftRecord } from 
 import type { AheadBehindStatus, WorktreeStatus } from "./git";
 import {
   formatDate,
+  isDeletedState,
   pad,
   shortCommit,
   shortStateId,
+  stateHasStar,
   stateDisplayBranch,
   stateGitCommit,
   stateMessage,
@@ -47,6 +49,11 @@ export function renderStateSummaryWithOptions(
 function appendStateMessage(text: string, state: StateRecord): string {
   const message = stateMessage(state);
   return message ? `${text} | ${message}` : text;
+}
+
+function stateLabelWithMarkers(state: StateRecord): string {
+  const prefix = stateHasStar(state) ? "★ " : "";
+  return `${prefix}${state.label}`;
 }
 
 function shortLinkedStateId(stateId: string | undefined): string {
@@ -98,16 +105,40 @@ export function renderGraph(
   options?: {
     currentStateId?: string | null;
     colorize?: boolean;
+    includeDeleted?: boolean;
   },
 ): string {
-  const sorted = repo.states
+  const allStates = repo.states
     .slice()
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const visibleStateIds = new Set(
+    allStates
+      .filter((state) => options?.includeDeleted === true || !isDeletedState(state))
+      .map((state) => state.id),
+  );
   const children = new Map<string | null, StateRecord[]>();
-  const leafStateIds = resolveBranchLeafStateIds(sorted, repo);
+  const leafStateIds = resolveBranchLeafStateIds(
+    allStates.filter((state) => visibleStateIds.has(state.id)),
+    repo,
+  );
+  const stateById = new Map(allStates.map((state) => [state.id, state] as const));
 
-  for (const state of sorted) {
-    const parent = state.parentStateId;
+  function visibleParentId(state: StateRecord): string | null {
+    let parentId = state.parentStateId;
+    while (parentId) {
+      if (visibleStateIds.has(parentId)) {
+        return parentId;
+      }
+      parentId = stateById.get(parentId)?.parentStateId ?? null;
+    }
+    return null;
+  }
+
+  for (const state of allStates) {
+    if (!visibleStateIds.has(state.id)) {
+      continue;
+    }
+    const parent = visibleParentId(state);
     if (!children.has(parent)) {
       children.set(parent, []);
     }
@@ -126,7 +157,7 @@ export function renderGraph(
       const isLeaf = leafStateIds.has(state.id);
       const leafMarker = isLeaf ? "^" : " ";
       const line = appendStateMessage(
-        `${prefix}${connector} ${currentMarker}${leafMarker} ${shortStateId(state.id)} [${state.kind}] ${state.label} (${stateDisplayBranch(state)})`,
+        `${prefix}${connector} ${currentMarker}${leafMarker} ${shortStateId(state.id)} [${state.kind}] ${stateLabelWithMarkers(state)} (${stateDisplayBranch(state)})`,
         state,
       );
       lines.push(
@@ -156,44 +187,51 @@ export function renderStateTable(
     colorize?: boolean;
     currentStateId?: string | null;
     repo?: RepoData;
+    includeDeleted?: boolean;
   },
 ): string {
-  if (states.length === 0) {
+  const visibleStates = states.filter((state) => options?.includeDeleted === true || !isDeletedState(state));
+  if (visibleStates.length === 0) {
     return "No states saved yet.";
   }
 
   const separator = "  ";
-  const idWidth = Math.max(8, "id".length, ...states.map((state) => shortStateId(state.id).length));
+  const idWidth = Math.max(8, "id".length, ...visibleStates.map((state) => shortStateId(state.id).length));
   const gitWidth = Math.max(
     8,
     "git".length,
-    ...states.map((state) => shortCommit(stateGitCommit(state), 8).length),
+    ...visibleStates.map((state) => shortCommit(stateGitCommit(state), 8).length),
   );
-  const kindWidth = Math.max(6, "kind".length, ...states.map((state) => state.kind.length));
-  const laneWidth = Math.max(4, "lane".length, ...states.map((state) => state.lane.length));
+  const kindWidth = Math.max(6, "kind".length, ...visibleStates.map((state) => state.kind.length));
+  const laneWidth = Math.max(4, "lane".length, ...visibleStates.map((state) => state.lane.length));
   const branchWidth = Math.max(
     6,
     "branch".length,
-    ...states.map((state) => stateDisplayBranch(state).length),
+    ...visibleStates.map((state) => stateDisplayBranch(state).length),
   );
   const labelWidth = Math.max(
     "label | message".length,
-    ...states.map((state) => appendStateMessage(state.label, state).length),
+    ...visibleStates.map((state) => appendStateMessage(stateLabelWithMarkers(state), state).length),
   );
-  const baseWidth = Math.max(4, "base".length, ...states.map((state) => shortLinkedStateId(state.metadata?.base).length));
+  const dateWidth = Math.max(
+    8,
+    "datetime".length,
+    ...visibleStates.map((state) => formatDate(state.createdAt).length),
+  );
+  const baseWidth = Math.max(4, "base".length, ...visibleStates.map((state) => shortLinkedStateId(state.metadata?.base).length));
   const cherryWidth = Math.max(
     6,
     "cherry".length,
-    ...states.map((state) => shortLinkedStateId(state.metadata?.cherry).length),
+    ...visibleStates.map((state) => shortLinkedStateId(state.metadata?.cherry).length),
   );
   const lines = [
-    `${pad("id", idWidth)}${separator}${pad("git", gitWidth)}${separator}${pad("kind", kindWidth)}${separator}${pad("lane", laneWidth)}${separator}${pad("branch", branchWidth)}${separator}${pad("label | message", labelWidth)}${separator}${pad("base", baseWidth)}${separator}${pad("cherry", cherryWidth)}`,
+    `${pad("id", idWidth)}${separator}${pad("git", gitWidth)}${separator}${pad("kind", kindWidth)}${separator}${pad("lane", laneWidth)}${separator}${pad("branch", branchWidth)}${separator}${pad("label | message", labelWidth)}${separator}${pad("base", baseWidth)}${separator}${pad("cherry", cherryWidth)}${separator}${pad("datetime", dateWidth)}`,
   ];
-  const leafStateIds = resolveBranchLeafStateIds(states, options?.repo);
+  const leafStateIds = resolveBranchLeafStateIds(visibleStates, options?.repo);
 
-  for (const state of states) {
-    const labelText = appendStateMessage(state.label, state);
-    const lineWithLinks = `${pad(shortStateId(state.id), idWidth)}${separator}${pad(shortCommit(stateGitCommit(state), 8), gitWidth)}${separator}${pad(state.kind, kindWidth)}${separator}${pad(state.lane, laneWidth)}${separator}${pad(stateDisplayBranch(state), branchWidth)}${separator}${pad(labelText, labelWidth)}${separator}${pad(shortLinkedStateId(state.metadata?.base), baseWidth)}${separator}${pad(shortLinkedStateId(state.metadata?.cherry), cherryWidth)}`;
+  for (const state of visibleStates) {
+    const labelText = appendStateMessage(stateLabelWithMarkers(state), state);
+    const lineWithLinks = `${pad(shortStateId(state.id), idWidth)}${separator}${pad(shortCommit(stateGitCommit(state), 8), gitWidth)}${separator}${pad(state.kind, kindWidth)}${separator}${pad(state.lane, laneWidth)}${separator}${pad(stateDisplayBranch(state), branchWidth)}${separator}${pad(labelText, labelWidth)}${separator}${pad(shortLinkedStateId(state.metadata?.base), baseWidth)}${separator}${pad(shortLinkedStateId(state.metadata?.cherry), cherryWidth)}${separator}${pad(formatDate(state.createdAt), dateWidth)}`;
     lines.push(
       colorizeBranchLine(
         lineWithLinks,
@@ -287,7 +325,7 @@ function scrambleHash(value: number): number {
 
 export function renderStory(states: StateRecord[]): string {
   const memorable = states.filter((state) =>
-    state.kind === "star" || state.kind === "nice"
+    state.kind === "nice" || stateHasStar(state)
   );
 
   if (memorable.length === 0) {

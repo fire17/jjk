@@ -61,6 +61,14 @@ export function stateMessage(state: {
   return message && message.length > 0 ? message : null;
 }
 
+export function isDeletedState(state: {
+  metadata?: {
+    deletedAt?: string;
+  };
+}): boolean {
+  return Boolean(state.metadata?.deletedAt);
+}
+
 export function shortCommit(commit: string, length = 12): string {
   return commit.slice(0, length);
 }
@@ -76,6 +84,13 @@ export function defaultLabel(kind: StateKind, description: string): string {
   }
 
   return trimmed.length > 48 ? `${trimmed.slice(0, 45)}...` : trimmed;
+}
+
+export function stateHasStar(state: {
+  kind: StateKind;
+  tags: string[];
+}): boolean {
+  return state.kind === "star" || state.tags.includes("star");
 }
 
 export function formatDate(value: string): string {
@@ -156,6 +171,8 @@ export function ensureDescription(kind: StateKind, description: string): string 
   switch (kind) {
     case "new":
       return "new branch state";
+    case "stash":
+      return "stash workspace changes";
     case "cherry":
       return "picked state changes";
     case "step":

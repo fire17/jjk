@@ -31,6 +31,8 @@ import {
   defaultLabel,
   ensureDescription,
   findStateMatches,
+  branchSegment,
+  isDeletedState,
   nowIso,
   shortId,
   slugify,
@@ -213,8 +215,26 @@ export function ensureLane(
 
 function getLatestStateOnBranch(repo: RepoData, branch: string): StateRecord | null {
   for (let index = repo.states.length - 1; index >= 0; index -= 1) {
-    if (repo.states[index]?.branch === branch) {
+    if (repo.states[index]?.branch === branch && !isDeletedState(repo.states[index]!)) {
       return repo.states[index] ?? null;
+    }
+  }
+  return null;
+}
+
+function findLatestVisibleStateForLane(
+  repo: RepoData,
+  laneName: string,
+  branch: string,
+  excludeStateId?: string,
+): StateRecord | null {
+  for (let index = repo.states.length - 1; index >= 0; index -= 1) {
+    const state = repo.states[index];
+    if (!state || state.id === excludeStateId || isDeletedState(state)) {
+      continue;
+    }
+    if (state.lane === laneName || stateDisplayBranch(state) === branch) {
+      return state;
     }
   }
   return null;
@@ -241,6 +261,17 @@ function buildStateCommitMessage(input: {
     `Continuation-Branch: ${input.continuationBranch ?? "none"}`,
   ].join("\n");
   return `${subject}\n\n${body}`;
+}
+
+function withKindTags(kind: StateKind, tags: string[] | undefined): string[] {
+  const merged = new Set(tags ?? []);
+  if (kind === "star") {
+    merged.add("star");
+  }
+  if (kind === "stash") {
+    merged.add("stash");
+  }
+  return Array.from(merged);
 }
 
 function findMostRecentStateForCommit(
@@ -276,7 +307,7 @@ function findLatestStateForLane(
 ): StateRecord | null {
   for (let index = repo.states.length - 1; index >= 0; index -= 1) {
     const state = repo.states[index];
-    if (!state || state.id === excludeStateId) {
+    if (!state || state.id === excludeStateId || isDeletedState(state)) {
       continue;
     }
     if (state.lane === laneName || stateDisplayBranch(state) === branch) {
@@ -425,7 +456,7 @@ export function saveState(
     commit: snapshot.commit,
     parentCommit: snapshot.parentCommit,
     parentStateId,
-    tags: request.tags ?? [],
+    tags: withKindTags(request.kind, request.tags),
     stats: {
       changedFiles: snapshot.changedFiles,
     },
@@ -474,18 +505,139 @@ export function isTipStateOnBranch(root: string, stateId: string, branch: string
   return getLatestStateOnBranch(repo, branch)?.id === stateId;
 }
 
-export function resolveState(root: string, query: string): StateRecord {
+function resolveWorkspaceStateForBranch(
+  repo: RepoData,
+  root: string,
+  branchName: string | null,
+  headCommit: string | null,
+): StateRecord | null {
+  const returnedStateId = repo.returnContext?.stateId ?? null;
+  if (returnedStateId) {
+    const returned = repo.states.find((state) => state.id === returnedStateId) ?? null;
+    if (returned && (!headCommit || stateGitCommit(returned) === headCommit)) {
+      return returned;
+    }
+  }
+
+  if (headCommit) {
+    for (let index = repo.states.length - 1; index >= 0; index -= 1) {
+      const state = repo.states[index];
+      if (!state || isDeletedState(state)) {
+        continue;
+      }
+      if (stateGitCommit(state) !== headCommit) {
+        continue;
+      }
+      if (!branchName || stateDisplayBranch(state) === branchName) {
+        return state;
+      }
+    }
+  }
+
+  if (branchName) {
+    const laneName = repo.branchLaneMap[branchName];
+    const stateId = laneName ? repo.lanes[laneName]?.currentStateId ?? null : null;
+    if (stateId) {
+      return repo.states.find((state) => state.id === stateId) ?? null;
+    }
+  }
+
+  return null;
+}
+
+export function stashWorkspace(
+  root: string,
+  request: {
+    description: string;
+    label?: string;
+    message?: string;
+  },
+): SaveStateResult {
+  if (!hasDirtyWorktree(root)) {
+    throw new Error("No working changes are available to stash.");
+  }
+
   const repo = loadRepo(root);
-  if (repo.states.length === 0) {
+  const currentBranchName = getCurrentBranchName(root);
+  const sourceBranch = currentBranchName ?? repo.returnContext?.sourceBranch ?? getCurrentBranch(root);
+  const headCommit = getHeadCommit(root);
+  const sourceState = resolveWorkspaceStateForBranch(repo, root, currentBranchName, headCommit);
+  const description = ensureDescription("stash", request.description);
+  const label = request.label ?? defaultLabel("stash", description);
+  const message = request.message?.trim() || undefined;
+  const stateId = shortId();
+  const stashBranch = `jjk/stash_${branchSegment(label)}_${stateId}`;
+  const lane = ensureLane(repo, stashBranch, stashBranch, sourceBranch);
+  const continuationBranch = stashBranch;
+  const commitMessage = buildStateCommitMessage({
+    kind: "stash",
+    label,
+    description,
+    message,
+    branch: stashBranch,
+    lane: lane.name,
+    continuationBranch,
+  });
+  const snapshot = createSnapshotCommit(root, commitMessage, {
+    targetBranch: stashBranch,
+    parentCommit: headCommit,
+  });
+
+  const state: StateRecord = {
+    id: stateId,
+    kind: "stash",
+    label,
+    description,
+    createdAt: nowIso(),
+    branch: stashBranch,
+    lane: lane.name,
+    continuationBranch,
+    commit: snapshot.commit,
+    parentCommit: snapshot.parentCommit,
+    parentStateId: sourceState?.id ?? null,
+    tags: withKindTags("stash", []),
+    stats: {
+      changedFiles: snapshot.changedFiles,
+    },
+    metadata: {
+      gitCommit: snapshot.commit,
+      ...(message ? { message } : {}),
+      stashFromBranch: sourceBranch,
+      ...(sourceState?.id ? { stashFromStateId: sourceState.id } : {}),
+    },
+  };
+
+  repo.states.push(state);
+  lane.currentStateId = state.id;
+  lane.updatedAt = state.createdAt;
+  repo.branchLaneMap[stashBranch] = lane.name;
+  updateRef(root, `refs/jjk/states/${state.id}`, state.commit);
+  saveRepo(root, repo);
+  restoreHeadWorktree(root);
+  importIntoJj(root);
+
+  return { state, repo };
+}
+
+export function resolveState(
+  root: string,
+  query: string,
+  options?: {
+    includeDeleted?: boolean;
+  },
+): StateRecord {
+  const repo = loadRepo(root);
+  const states = (options?.includeDeleted ? repo.states : repo.states.filter((state) => !isDeletedState(state)));
+  if (states.length === 0) {
     throw new Error("No saved states exist yet.");
   }
 
   const trimmed = query.trim();
   if (trimmed.length === 0) {
-    return repo.states[repo.states.length - 1];
+    return states[states.length - 1];
   }
 
-  const exact = repo.states.find(
+  const exact = states.find(
     (state) =>
       state.id === trimmed ||
       state.label === trimmed ||
@@ -496,7 +648,7 @@ export function resolveState(root: string, query: string): StateRecord {
     return exact;
   }
 
-  const matches = findStateMatches(repo.states, trimmed);
+  const matches = findStateMatches(states, trimmed);
   if (matches.length === 0) {
     throw new Error(`No state matched \`${trimmed}\`.`);
   }
@@ -504,10 +656,146 @@ export function resolveState(root: string, query: string): StateRecord {
   return matches[0].state;
 }
 
-export function listStates(root: string): StateRecord[] {
-  return loadRepo(root).states.slice().sort((left, right) =>
+export function listStates(
+  root: string,
+  options?: {
+    includeDeleted?: boolean;
+  },
+): StateRecord[] {
+  const states = loadRepo(root).states.filter((state) => options?.includeDeleted || !isDeletedState(state));
+  return states.slice().sort((left, right) =>
     left.createdAt.localeCompare(right.createdAt),
   );
+}
+
+export function deleteState(root: string, stateId: string): StateRecord {
+  const repo = loadRepo(root);
+  const state = repo.states.find((entry) => entry.id === stateId);
+  if (!state) {
+    throw new Error(`No state matched \`${stateId}\`.`);
+  }
+  if (isDeletedState(state)) {
+    throw new Error(`State \`${stateId}\` is already deleted.`);
+  }
+
+  const deletedBranch = `deleted/${branchSegment(state.label)}`;
+  const previousBranch = state.branch;
+  const previousLane = state.lane;
+  const previousContinuationBranch = state.continuationBranch ?? null;
+  const lane = repo.lanes[previousLane] ?? null;
+  const wasLaneCurrent = lane?.currentStateId === state.id;
+
+  state.metadata = {
+    ...(state.metadata ?? {}),
+    gitCommit: stateGitCommit(state),
+    deletedAt: nowIso(),
+    deletedBranch,
+    deletedLocation: {
+      branch: previousBranch,
+      lane: previousLane,
+      continuationBranch: previousContinuationBranch,
+      parentStateId: state.parentStateId,
+      wasLaneCurrent,
+    },
+  };
+  state.branch = deletedBranch;
+  state.lane = deletedBranch;
+  state.continuationBranch = null;
+
+  if (wasLaneCurrent && lane) {
+    lane.currentStateId = findLatestVisibleStateForLane(
+      repo,
+      previousLane,
+      previousBranch,
+      state.id,
+    )?.id ?? null;
+    lane.updatedAt = nowIso();
+  }
+
+  if (repo.returnContext?.stateId === state.id) {
+    repo.returnContext = null;
+  }
+
+  repo.currentStateHistory = normalizeCurrentStateHistory(repo.currentStateHistory, repo.states);
+  saveRepo(root, repo);
+  importIntoJj(root);
+  return state;
+}
+
+export function recoverState(root: string, stateId: string): StateRecord {
+  const repo = loadRepo(root);
+  const state = repo.states.find((entry) => entry.id === stateId);
+  if (!state) {
+    throw new Error(`No state matched \`${stateId}\`.`);
+  }
+  const deletedLocation = state.metadata?.deletedLocation;
+  if (!isDeletedState(state) || !deletedLocation) {
+    throw new Error(`State \`${stateId}\` is not deleted.`);
+  }
+
+  state.branch = deletedLocation.branch;
+  state.lane = deletedLocation.lane;
+  state.continuationBranch = deletedLocation.continuationBranch ?? null;
+  state.parentStateId = deletedLocation.parentStateId;
+  state.metadata = {
+    ...(state.metadata ?? {}),
+    gitCommit: stateGitCommit(state),
+  };
+  delete state.metadata.deletedAt;
+  delete state.metadata.deletedBranch;
+  delete state.metadata.deletedLocation;
+
+  if (deletedLocation.wasLaneCurrent) {
+    const lane = ensureLane(repo, state.branch, deletedLocation.lane, state.branch);
+    lane.currentStateId = state.id;
+    lane.updatedAt = nowIso();
+    repo.branchLaneMap[state.branch] = lane.name;
+  }
+
+  saveRepo(root, repo);
+  importIntoJj(root);
+  return state;
+}
+
+export function eraseState(root: string, stateId: string): StateRecord {
+  const repo = loadRepo(root);
+  const index = repo.states.findIndex((entry) => entry.id === stateId);
+  if (index < 0) {
+    throw new Error(`No state matched \`${stateId}\`.`);
+  }
+  if (repo.states.length <= 1) {
+    throw new Error("Cannot erase the last remaining state.");
+  }
+
+  const state = repo.states[index]!;
+  const hasChildren = repo.states.some((entry) => entry.parentStateId === state.id);
+  if (hasChildren) {
+    throw new Error(`Cannot erase state \`${stateId}\` because other states depend on it.`);
+  }
+
+  repo.states.splice(index, 1);
+
+  for (const lane of Object.values(repo.lanes)) {
+    if (lane.currentStateId !== state.id) {
+      continue;
+    }
+    lane.currentStateId = findLatestVisibleStateForLane(
+      repo,
+      lane.name,
+      lane.branch,
+      state.id,
+    )?.id ?? null;
+    lane.updatedAt = nowIso();
+  }
+
+  if (repo.returnContext?.stateId === state.id) {
+    repo.returnContext = null;
+  }
+
+  repo.currentStateHistory = normalizeCurrentStateHistory(repo.currentStateHistory, repo.states);
+  saveRepo(root, repo);
+  importIntoJj(root);
+  return state;
 }
 
 export function updateBranchTarget(
@@ -691,6 +979,39 @@ export function resolveLane(root: string, query: string): LaneRecord | null {
   );
 }
 
+export function resolveLatestStateForBranch(root: string, query: string): StateRecord {
+  const repo = loadRepo(root);
+  const trimmed = query.trim();
+  if (trimmed.length === 0) {
+    throw new Error("Provide a branch to resolve.");
+  }
+
+  const resolvedLane = resolveLane(root, trimmed);
+  const branch = resolvedLane?.branch ?? trimmed;
+  const laneName = repo.branchLaneMap[branch] ?? resolvedLane?.name ?? null;
+  const lane = laneName ? repo.lanes[laneName] ?? null : null;
+  const laneStateId = lane?.currentStateId ?? null;
+
+  if (laneStateId) {
+    const laneState = repo.states.find((state) => state.id === laneStateId && !isDeletedState(state));
+    if (laneState) {
+      return laneState;
+    }
+  }
+
+  for (let index = repo.states.length - 1; index >= 0; index -= 1) {
+    const state = repo.states[index];
+    if (!state || isDeletedState(state)) {
+      continue;
+    }
+    if (stateDisplayBranch(state) === branch || state.branch === branch || state.lane === branch) {
+      return state;
+    }
+  }
+
+  throw new Error(`No saved state is available for branch \`${trimmed}\`.`);
+}
+
 export function rememberTimeshift(root: string, label: string): TimeshiftRecord {
   const repo = loadRepo(root);
   const branch = getCurrentBranch(root);
@@ -754,6 +1075,24 @@ export function recordFreeze(root: string, stateId: string): FreezeRecord {
   return record;
 }
 
+export function starState(root: string, stateId: string): StateRecord {
+  const repo = loadRepo(root);
+  const state = repo.states.find((entry) => entry.id === stateId);
+  if (!state) {
+    throw new Error(`No state matched \`${stateId}\`.`);
+  }
+  if (isDeletedState(state)) {
+    throw new Error(`Cannot star deleted state \`${stateId}\`.`);
+  }
+
+  if (!state.tags.includes("star")) {
+    state.tags = [...state.tags, "star"];
+    saveRepo(root, repo);
+  }
+
+  return state;
+}
+
 export function promoteState(
   root: string,
   sourceStateId: string,
@@ -776,7 +1115,7 @@ export function promoteState(
     description: description?.trim() || source.description,
     createdAt: nowIso(),
     parentStateId: source.id,
-    tags: [...source.tags],
+    tags: withKindTags(kind, source.tags),
     metadata: {
       ...(source.metadata ?? {}),
       gitCommit: source.metadata?.gitCommit ?? source.commit,
