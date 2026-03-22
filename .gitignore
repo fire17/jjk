@@ -2,3 +2,4 @@
 node_modules
 .jjk/runtime
 site/.cache
+.worktrees/
