@@ -882,6 +882,33 @@ export function pickStateChanges(
   }
 }
 
+export function revertStateChanges(
+  cwd: string,
+  commit: string,
+  parentCommit: string | null,
+): boolean {
+  return mergeChangedFilesFromState(cwd, commit, parentCommit ?? EMPTY_TREE);
+}
+
+export function getStatePatch(
+  cwd: string,
+  baseCommit: string,
+  commit: string,
+): string {
+  return run(["git", "diff", "--binary", baseCommit, commit], { cwd }).stdout;
+}
+
+export function getStateChangedFiles(
+  cwd: string,
+  baseCommit: string,
+  commit: string,
+): string[] {
+  return run(["git", "diff", "--name-only", baseCommit, commit], { cwd }).stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 function mergeChangedFilesFromState(
   cwd: string,
   baseCommit: string,

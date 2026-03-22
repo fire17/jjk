@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -22,9 +22,12 @@ import {
   isJjRepo,
   localBranchExists,
   pickStateChanges,
+  getStateChangedFiles,
+  getStatePatch,
   pullFastForward,
   pruneJjKeepRefs,
   pushCurrentBranchAndStateRefs,
+  revertStateChanges,
   switchBranch,
   switchToDetachedCommit,
   worktreeMatchesCommit,
@@ -45,6 +48,7 @@ import {
   renderTimeshifts,
 } from "./render";
 import {
+  amendState,
   createBackup,
   attachBranchToState,
   branchFromState,
@@ -63,6 +67,8 @@ import {
   moveState,
   noteState,
   pinState,
+  getWorkspaceSnapshotHistory,
+  listWorkspaceSnapshots,
   promoteState,
   recordWorkspaceSnapshot,
   redoWorkspaceSnapshot,
@@ -76,6 +82,7 @@ import {
   resolveLatestStateForBranch,
   resolveState,
   resolveTimeshift,
+  resolveBackupPath,
   saveState,
   saveRepo,
   isTipStateOnBranch,
@@ -99,12 +106,14 @@ import type { MapHit, RepoData, SaveStateRequest, StateRecord } from "./types";
 import {
   branchSegment,
   continuationBranchName,
+  formatDate,
   formatRelativePath,
   isDeletedState,
   findStateMatches,
   nowIso,
   parseStateLabelAndMessage,
   shortStateId,
+  shortCommit,
   stateDisplayBranch,
   stateHasStar,
   stateHasTag,
@@ -144,6 +153,9 @@ States:
   jjk graph [--deleted] [--branch <branch>]
   jjk favorites
   jjk show [state]
+  jjk patch [state]
+  jjk files [state]
+  jjk touched <branch>
   jjk story
   jjk diff [--atomic] [state] [state]
   jjk log <branch>
@@ -172,6 +184,9 @@ States:
   jjk clean
   jjk gc
   jjk pick <state>
+  jjk replay <state> onto <branch>
+  jjk merge-state <state> into <branch>
+  jjk revert-state <state>
   jjk promote <state> <nice|star>
   jjk compare-branch <a> <b>
   jjk move <state> <branch>
@@ -180,7 +195,12 @@ States:
   jjk rename-state <state> <new-label>
   jjk rename-branch <old> <new>
   jjk backup [label]
+  jjk backups
+  jjk snapshot-log
   jjk load <backupfile>
+  jjk restore <backupfile> [--preview]
+  jjk export <state> <file>
+  jjk import <file>
   jjk return <state>
   jjk lastest <branch>
   jjk continue
@@ -247,6 +267,9 @@ Examples:
     jjk inspect purple
     jjk search purple
     jjk show purple
+    jjk patch purple
+    jjk files purple
+    jjk touched jjk/purple
     jjk diff purple orange
     jjk diff --atomic purple fast_purple
     jjk compare-branch jjk/green jjk/orange
@@ -255,6 +278,9 @@ Examples:
 
   Recovery:
     jjk backup before_refactor
+    jjk backups
+    jjk snapshot-log
+    jjk restore before_refactor --preview
     jjk undo
     jjk redo
     jjk load before_refactor
@@ -263,6 +289,9 @@ Examples:
     jjk return orange
     jjk pick fast_purple
     jjk nice fast_orange
+    jjk replay fast_purple onto jjk/orange
+    jjk merge-state fast_purple into jjk/orange
+    jjk revert-state orange
     jjk update jjk/purple purple
     jjk branch review_lane
     jjk fork review_slice
@@ -789,6 +818,214 @@ function compareAtomicStates(root: string, stateA: StateRecord, stateB: StateRec
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }
+}
+
+function renderAtomicChain(root: string, state: StateRecord): string {
+  const repo = loadRepo(root);
+  const chain: StateRecord[] = [];
+  let current: StateRecord | null = state;
+
+  while (current) {
+    chain.push(current);
+    current = current.parentStateId
+      ? repo.states.find((candidate) => candidate.id === current?.parentStateId) ?? null
+      : null;
+  }
+
+  chain.reverse();
+  return chain
+    .map((entry, index) =>
+      [
+        `${index + 1}/${chain.length} ${shortStateId(entry.id)} [${entry.kind}] ${entry.label} (${stateDisplayBranch(entry)})`,
+        renderAtomicStateDiff(root, entry),
+      ].join("\n"),
+    )
+    .join("\n\n");
+}
+
+function renderStateFiles(root: string, state: StateRecord): string {
+  const files = getStateChangedFiles(root, state.parentCommit ?? EMPTY_TREE, state.commit);
+  if (files.length === 0) {
+    return "No files changed in the selected state.";
+  }
+  return files.join("\n");
+}
+
+function renderTouchedFiles(root: string, branchQuery: string): string {
+  const branchState = resolveLatestStateForBranch(root, branchQuery);
+  const branch = stateDisplayBranch(branchState);
+  const touched = new Set<string>();
+  for (const state of listStates(root)) {
+    if (stateDisplayBranch(state) !== branch) {
+      continue;
+    }
+    for (const file of getStateChangedFiles(root, state.parentCommit ?? EMPTY_TREE, state.commit)) {
+      touched.add(file);
+    }
+  }
+
+  if (touched.size === 0) {
+    return `No files touched on ${branch}.`;
+  }
+
+  return Array.from(touched).sort((left, right) => left.localeCompare(right)).join("\n");
+}
+
+function renderBackupsList(root: string): string {
+  const backupsRoot = join(root, ".jjk", "backups");
+  if (!existsSync(backupsRoot)) {
+    return "No backups saved yet.";
+  }
+
+  const files = readdirSync(backupsRoot)
+    .map((name) => {
+      const path = join(backupsRoot, name);
+      const stats = statSync(path);
+      return {
+        name,
+        path,
+        size: stats.size,
+        createdAt: stats.mtime.toISOString(),
+      };
+    })
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+
+  if (files.length === 0) {
+    return "No backups saved yet.";
+  }
+
+  const separator = "  ";
+  const nameWidth = Math.max(12, ...files.map((entry) => entry.name.length));
+  const sizeWidth = Math.max(8, ...files.map((entry) => formatFileSize(entry.size).length));
+  const lines = [
+    `${"#".padEnd(2)}${separator}${"backup".padEnd(nameWidth)}${separator}${"size".padEnd(sizeWidth)}${separator}modified`,
+  ];
+
+  files.forEach((entry, index) => {
+    lines.push(
+      `${String(index + 1).padEnd(2)}${separator}${entry.name.padEnd(nameWidth)}${separator}${formatFileSize(entry.size).padEnd(sizeWidth)}${separator}${formatDate(entry.createdAt)}`,
+    );
+  });
+
+  return lines.join("\n");
+}
+
+function renderSnapshotLog(root: string): string {
+  const history = getWorkspaceSnapshotHistory(root);
+  if (history.entries.length === 0) {
+    return "No workspace snapshots recorded yet.";
+  }
+
+  const lines = [
+    `${"#".padEnd(2)}  ${"id".padEnd(8)}  ${"reason".padEnd(28)}  ${"branch".padEnd(18)}  ${"head".padEnd(12)}  created`,
+  ];
+
+  history.entries.forEach((snapshot, index) => {
+    const current = index === history.index ? "*" : " ";
+    const branch = snapshot.git.currentBranch ?? "(detached)";
+    const head = snapshot.git.headCommit ? shortCommit(snapshot.git.headCommit, 12) : "-";
+    lines.push(
+      `${current}${String(index + 1).padEnd(2)}  ${shortCommit(snapshot.id, 8).padEnd(8)}  ${snapshot.reason.slice(0, 28).padEnd(28)}  ${branch.slice(0, 18).padEnd(18)}  ${head.padEnd(12)}  ${formatDate(snapshot.createdAt)}`,
+    );
+  });
+
+  return lines.join("\n");
+}
+
+function renderBackupPreview(snapshot: { createdAt: string; reason: string; repo: RepoData; git: { currentBranch: string | null; headCommit: string | null; branches: Record<string, string>; }; }): string {
+  const history = snapshot.repo.currentStateHistory ?? null;
+  const currentState = history ? history.entries[history.index] ?? null : null;
+  const laneCount = Object.keys(snapshot.repo.lanes).length;
+  const branchCount = Object.keys(snapshot.git.branches).length;
+  return [
+    `backup preview: ${snapshot.reason}`,
+    `created: ${formatDate(snapshot.createdAt)}`,
+    `current branch: ${snapshot.git.currentBranch ?? "(detached)"}`,
+    `head: ${snapshot.git.headCommit ? shortCommit(snapshot.git.headCommit, 12) : "-"}`,
+    `repo states: ${snapshot.repo.states.length}`,
+    `lanes: ${laneCount}`,
+    `git branches: ${branchCount}`,
+    `current state id: ${currentState ?? "-"}`,
+  ].join("\n");
+}
+
+function applyStateReplay(root: string, sourceState: StateRecord, targetBranchQuery: string, kind: "replay" | "merge-state"): StateRecord {
+  if (hasDirtyWorktree(root)) {
+    saveState(root, {
+      kind: "auto",
+      description: `auto pre-${kind} checkpoint before ${sourceState.id}`,
+    });
+  }
+
+  const targetBranch = normalizeBranchName(targetBranchQuery);
+  let targetState: StateRecord | null = null;
+  try {
+    targetState = resolveLatestStateForBranch(root, targetBranch);
+  } catch {
+    targetState = null;
+  }
+
+  createOrSwitchBranch(root, targetBranch, targetState?.commit ?? getHeadCommit(root) ?? undefined, {
+    force: true,
+    reset: true,
+  });
+
+  const logicalParentCommit = sourceState.parentStateId
+    ? resolveState(root, sourceState.parentStateId).commit
+    : sourceState.parentCommit;
+  const applied = pickStateChanges(root, logicalParentCommit, sourceState.commit);
+  if (!applied) {
+    throw new Error(`No changes to ${kind} from ${shortStateId(sourceState.id)}.`);
+  }
+
+  const result = saveState(root, {
+    kind: "cherry",
+    description: `${kind} ${sourceState.id} ${sourceState.label}`,
+    label: `cherry_${branchSegment(sourceState.label)}`,
+    metadata: {
+      ...(targetState?.id ? { base: targetState.id } : {}),
+      cherry: sourceState.id,
+    },
+  }, {
+    forceCurrentBranch: targetBranch,
+    allowMainBranchSave: targetBranch === "main",
+    continuationBranch: targetBranch,
+    suppressReturnBranchFork: true,
+  });
+
+  const activation = activateState(root, result.state, "returned", {
+    syncHistoryBeforeNavigate: false,
+  });
+  console.log(`${kind} ${sourceState.id} onto ${targetBranch}`);
+  console.log(renderStateSummary(result.state));
+  console.log(activation);
+  recordWorkspaceSnapshot(root, `${kind}:${result.state.id}`);
+  return result.state;
+}
+
+function renderBackupSummary(root: string, path: string, snapshot: unknown): string {
+  if (
+    typeof snapshot !== "object" ||
+    snapshot === null ||
+    !("createdAt" in snapshot) ||
+    !("repo" in snapshot) ||
+    !("git" in snapshot)
+  ) {
+    return `restore preview: ${formatRelativePath(root, path)}`;
+  }
+
+  const typed = snapshot as {
+    createdAt: string;
+    reason: string;
+    repo: RepoData;
+    git: {
+      currentBranch: string | null;
+      headCommit: string | null;
+      branches: Record<string, string>;
+    };
+  };
+
+  return renderBackupPreview(typed);
 }
 
 function stateMatchesWorkspace(
@@ -1864,10 +2101,44 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       );
       return;
     }
-    case "show": {
+    case "amend": {
+      const currentState = resolveCurrentState(root, loadRepo(root).states);
+      if (!currentState) {
+        throw new Error("No current state is available.");
+      }
+
+      const amendment = parseStateLabelAndMessage(args.slice(1).join(" "));
+      const amended = amendState(root, currentState.id, {
+        description: amendment.description || currentState.description,
+        label: amendment.label,
+        message: amendment.message,
+      });
+      syncCurrentStateHistory(root, amended.id);
+      recordWorkspaceSnapshot(root, `amend:${amended.id}`);
+      console.log(`amended ${shortStateId(amended.id)} ${amended.label}`);
+      console.log(renderStateSummary(amended));
+      return;
+    }
+    case "show":
+    case "patch": {
+      const atomicChain = args.includes("--atomic-chain");
+      const query = args.slice(1).filter((arg) => arg !== "--atomic-chain").join(" ").trim();
+      const state = query.length > 0 ? resolveState(root, query) : resolveDefaultState(root);
+      console.log(atomicChain ? renderAtomicChain(root, state) : renderAtomicStateDiff(root, state));
+      return;
+    }
+    case "files": {
       const query = args.slice(1).join(" ").trim();
       const state = query.length > 0 ? resolveState(root, query) : resolveDefaultState(root);
-      console.log(renderAtomicStateDiff(root, state));
+      console.log(renderStateFiles(root, state));
+      return;
+    }
+    case "touched": {
+      const query = args.slice(1).join(" ").trim();
+      if (query.length === 0) {
+        throw new Error("Usage: jjk touched <branch>");
+      }
+      console.log(renderTouchedFiles(root, query));
       return;
     }
     case "move": {
@@ -2158,6 +2429,68 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       console.log(renderStateSummary(picked.state));
       console.log(activation);
       recordWorkspaceSnapshot(root, `pick:${picked.state.id}`);
+      return;
+    }
+    case "replay": {
+      const sourceQuery = args[1] ?? "";
+      const ontoIndex = args.findIndex((arg) => arg === "onto");
+      const branchQuery = ontoIndex >= 0 ? args.slice(ontoIndex + 1).join(" ").trim() : "";
+      if (sourceQuery.length === 0 || branchQuery.length === 0) {
+        throw new Error("Usage: jjk replay <state> onto <branch>");
+      }
+
+      const sourceState = resolveState(root, sourceQuery);
+      applyStateReplay(root, sourceState, branchQuery, "replay");
+      return;
+    }
+    case "merge-state": {
+      const sourceQuery = args[1] ?? "";
+      const intoIndex = args.findIndex((arg) => arg === "into");
+      const branchQuery = intoIndex >= 0 ? args.slice(intoIndex + 1).join(" ").trim() : "";
+      if (sourceQuery.length === 0 || branchQuery.length === 0) {
+        throw new Error("Usage: jjk merge-state <state> into <branch>");
+      }
+
+      const sourceState = resolveState(root, sourceQuery);
+      applyStateReplay(root, sourceState, branchQuery, "merge-state");
+      return;
+    }
+    case "revert-state": {
+      const query = args.slice(1).join(" ").trim();
+      if (query.length === 0) {
+        throw new Error("Usage: jjk revert-state <state>");
+      }
+
+      const sourceState = resolveState(root, query);
+      if (hasDirtyWorktree(root)) {
+        saveState(root, {
+          kind: "auto",
+          description: `auto pre-revert checkpoint before ${sourceState.id}`,
+        });
+      }
+
+      const reverted = revertStateChanges(root, sourceState.commit, sourceState.parentCommit);
+      if (!reverted) {
+        console.log(`revert produced no changes for ${sourceState.id}`);
+        return;
+      }
+
+      const currentState = resolveCurrentState(root, loadRepo(root).states);
+      const result = saveState(root, {
+        kind: "save",
+        description: `revert ${sourceState.id} ${sourceState.label}`,
+        label: `revert_${branchSegment(sourceState.label)}`,
+        metadata: {
+          ...(currentState?.id ? { base: currentState.id } : {}),
+          cherry: sourceState.id,
+        },
+      }, {
+        suppressReturnBranchFork: true,
+      });
+      syncCurrentStateHistory(root, result.state.id);
+      recordWorkspaceSnapshot(root, `revert-state:${result.state.id}`);
+      console.log(`reverted ${shortStateId(sourceState.id)} on ${getCurrentBranch(root)}`);
+      console.log(renderStateSummary(result.state));
       return;
     }
     case "promote": {
@@ -2455,22 +2788,68 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
       console.log(renderTimeshifts(listTimeshifts(root)));
       return;
     }
-    case "backup": {
-      const label = args.slice(1).join(" ").trim();
-      const path = createBackup(root, label || undefined);
-      const size = statSync(path).size;
-      console.log(`backup saved: ${formatRelativePath(root, path)} (${formatFileSize(size)})`);
+    case "backups": {
+      console.log(renderBackupsList(root));
       return;
     }
-    case "load": {
-      const query = args.slice(1).join(" ").trim();
+    case "snapshot-log": {
+      console.log(renderSnapshotLog(root));
+      return;
+    }
+    case "restore":
+    case "load":
+    case "backup": {
+      if (command === "backup") {
+        const label = args.slice(1).join(" ").trim();
+        const path = createBackup(root, label || undefined);
+        const size = statSync(path).size;
+        console.log(`backup saved: ${formatRelativePath(root, path)} (${formatFileSize(size)})`);
+        return;
+      }
+
+      const restoreArgs = args.slice(1).filter((arg) => arg !== "--preview");
+      const query = restoreArgs.join(" ").trim();
       if (query.length === 0) {
         throw new Error("Usage: jjk load <backupfile>");
       }
+
+      const preview = command === "restore" && args.includes("--preview");
+      if (preview) {
+        const path = resolveBackupPath(root, query);
+        const snapshot = JSON.parse(readFileSync(path, "utf8"));
+        console.log(renderBackupSummary(root, path, snapshot));
+        return;
+      }
+
       recordWorkspaceSnapshot(root, `before-load:${query}`);
       const loaded = loadBackup(root, query);
       recordWorkspaceSnapshot(root, `load:${loaded.path}`);
       console.log(`loaded backup: ${formatRelativePath(root, loaded.path)}`);
+      return;
+    }
+    case "export": {
+      const stateQuery = args[1] ?? "";
+      const outputPath = args[2] ?? "";
+      if (stateQuery.length === 0 || outputPath.length === 0) {
+        throw new Error("Usage: jjk export <state> <file>");
+      }
+
+      const state = resolveState(root, stateQuery);
+      const path = createBackup(root, outputPath);
+      const size = statSync(path).size;
+      console.log(`exported ${shortStateId(state.id)} to ${formatRelativePath(root, path)} (${formatFileSize(size)})`);
+      return;
+    }
+    case "import": {
+      const path = args.slice(1).join(" ").trim();
+      if (path.length === 0) {
+        throw new Error("Usage: jjk import <file>");
+      }
+
+      recordWorkspaceSnapshot(root, `before-import:${path}`);
+      const loaded = loadBackup(root, path);
+      recordWorkspaceSnapshot(root, `import:${loaded.path}`);
+      console.log(`imported backup: ${formatRelativePath(root, loaded.path)}`);
       return;
     }
     default:

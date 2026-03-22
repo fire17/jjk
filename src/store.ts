@@ -31,6 +31,7 @@ import type {
   RepoData,
   SaveStateRequest,
   SaveStateResult,
+  StateMetadata,
   StateNavigationHistory,
   StateMetadata,
   StateRecord,
@@ -57,7 +58,7 @@ const FREEZE_DIR = "freezes";
 const HISTORY_FILE = "history.json";
 const BACKUPS_DIR = "backups";
 
-interface WorkspaceSnapshot {
+export interface WorkspaceSnapshot {
   id: string;
   createdAt: string;
   reason: string;
@@ -69,7 +70,7 @@ interface WorkspaceSnapshot {
   };
 }
 
-interface SnapshotHistory {
+export interface WorkspaceSnapshotHistory {
   version: 1;
   index: number;
   entries: WorkspaceSnapshot[];
@@ -122,7 +123,7 @@ function snapshotFingerprint(snapshot: WorkspaceSnapshot): string {
   });
 }
 
-function loadSnapshotHistory(root: string): SnapshotHistory {
+function loadSnapshotHistory(root: string): WorkspaceSnapshotHistory {
   const path = historyFilePath(root);
   if (!existsSync(path)) {
     return {
@@ -132,11 +133,19 @@ function loadSnapshotHistory(root: string): SnapshotHistory {
     };
   }
 
-  return JSON.parse(readFileSync(path, "utf8")) as SnapshotHistory;
+  return JSON.parse(readFileSync(path, "utf8")) as WorkspaceSnapshotHistory;
 }
 
-function saveSnapshotHistory(root: string, history: SnapshotHistory): void {
+function saveSnapshotHistory(root: string, history: WorkspaceSnapshotHistory): void {
   writeFileSync(historyFilePath(root), `${JSON.stringify(history, null, 2)}\n`);
+}
+
+export function getWorkspaceSnapshotHistory(root: string): WorkspaceSnapshotHistory {
+  return loadSnapshotHistory(root);
+}
+
+export function listWorkspaceSnapshots(root: string): WorkspaceSnapshot[] {
+  return loadSnapshotHistory(root).entries.slice();
 }
 
 function captureWorkspaceSnapshot(root: string, reason: string): WorkspaceSnapshot {
@@ -602,6 +611,87 @@ function buildStateCommitMessage(input: {
     `Continuation-Branch: ${input.continuationBranch ?? "none"}`,
   ].join("\n");
   return `${subject}\n\n${body}`;
+}
+
+export function amendState(
+  root: string,
+  stateId: string,
+  request: {
+    description?: string;
+    label?: string;
+    message?: string;
+    metadata?: Omit<StateMetadata, "gitCommit">;
+    tags?: string[];
+  },
+): StateRecord {
+  const repo = loadRepo(root);
+  const state = repo.states.find((entry) => entry.id === stateId);
+  if (!state) {
+    throw new Error(`No state matched \`${stateId}\`.`);
+  }
+  if (isDeletedState(state)) {
+    throw new Error(`Cannot amend deleted state \`${stateId}\`.`);
+  }
+
+  const hasChildren = repo.states.some(
+    (entry) => entry.parentStateId === state.id && !isDeletedState(entry),
+  );
+  if (hasChildren) {
+    throw new Error(`Cannot amend state \`${stateId}\` because other states depend on it.`);
+  }
+
+  const description = ensureDescription(state.kind, request.description ?? state.description);
+  const label = request.label?.trim() || state.label;
+  const message = request.message?.trim() || state.metadata?.message || undefined;
+  const commitMessage = buildStateCommitMessage({
+    kind: state.kind,
+    label,
+    description,
+    message,
+    branch: state.branch,
+    lane: state.lane,
+    continuationBranch: state.continuationBranch ?? null,
+  });
+  const snapshot = createSnapshotCommit(root, commitMessage, {
+    parentCommit: state.commit,
+    targetBranch: state.branch,
+  });
+
+  state.label = label;
+  state.description = description;
+  state.commit = snapshot.commit;
+  state.parentCommit = snapshot.parentCommit;
+  state.stats = {
+    changedFiles: snapshot.changedFiles,
+  };
+  state.tags = request.tags ? Array.from(new Set([...state.tags, ...request.tags])) : state.tags;
+  state.metadata = {
+    ...(state.metadata ?? {}),
+    ...(request.metadata ?? {}),
+    gitCommit: snapshot.commit,
+    ...(message ? { message } : {}),
+  };
+
+  const lane = repo.lanes[state.lane];
+  if (lane) {
+    lane.currentStateId = state.id;
+    lane.updatedAt = nowIso();
+  }
+
+  updateRef(root, `refs/jjk/states/${state.id}`, snapshot.commit);
+  const currentBranchName = getCurrentBranchName(root);
+  if (currentBranchName === null || currentBranchName === state.branch) {
+    createOrSwitchBranch(root, state.branch, snapshot.commit, {
+      force: true,
+      reset: true,
+    });
+  } else {
+    updateRef(root, `refs/heads/${state.branch}`, snapshot.commit);
+  }
+
+  saveRepo(root, repo);
+  importIntoJj(root);
+  return state;
 }
 
 function withKindTags(kind: StateKind, tags: string[] | undefined): string[] {
