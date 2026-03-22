@@ -120,7 +120,7 @@ describe("pick flow", () => {
       console.log = originalLog;
     }
 
-    expect(output.join("\n")).toContain(`*^ ${shortStateId(picked!.id)} [cherry]`);
+    expect(output.join("\n")).toContain(`└─ *^   ${shortStateId(picked!.id)} [cherry]`);
     expect(output.join("\n")).toContain("cherry_purple");
     expect(output.join("\n")).toContain(shortStateId(green.id));
     expect(output.join("\n")).toContain(shortStateId(purple.id));
