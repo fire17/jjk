@@ -1,5 +1,6 @@
 export type StateKind =
   | "new"
+  | "git"
   | "save"
   | "stash"
   | "cherry"

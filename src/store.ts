@@ -284,11 +284,11 @@ function reconcileRepoWithGit(root: string, repo: RepoData): RepoData {
     const branch = assignments.get(commit.hash) ?? fallbackBranch;
     const lane = ensureLane(repo, branch, branch, branch);
     const subject = commit.subject.trim();
-    const label = subject.length > 0 ? defaultLabel("save", subject) : commit.hash.slice(0, 12);
+    const label = subject.length > 0 ? defaultLabel("git", subject) : commit.hash.slice(0, 12);
     const description = subject.length > 0 ? subject : commit.hash.slice(0, 12);
     const state: StateRecord = {
       id: shortId(),
-      kind: "save",
+      kind: "git",
       label,
       description,
       createdAt: commit.committedAt || nowIso(),

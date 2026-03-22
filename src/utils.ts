@@ -177,6 +177,8 @@ export function ensureDescription(kind: StateKind, description: string): string 
   switch (kind) {
     case "new":
       return "new branch state";
+    case "git":
+      return "git imported state";
     case "stash":
       return "stash workspace changes";
     case "cherry":

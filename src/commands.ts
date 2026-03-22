@@ -27,6 +27,7 @@ import {
 import {
   renderDoctor,
   renderGraph,
+  renderLogGraph,
   renderCurrentState,
   renderLanes,
   renderMap,
@@ -107,6 +108,7 @@ States:
   jjk thumbsdown [state]
   jjk stash [description]
   jjk see [--deleted]
+  jjk graph [--deleted]
   jjk show [state]
   jjk story
   jjk diff [--atomic] [state] [state]
@@ -140,6 +142,41 @@ Flow:
 
 Shell:
   jjk
+
+Examples:
+  Basic:
+    jjk init
+    jjk save "main checkpoint"
+    jjk see
+    jjk graph
+
+  Branching:
+    jjk green
+    jjk purple
+    jjk return green
+    jjk orange
+
+  Review markers:
+    jjk star
+    jjk thumbsup purple
+    jjk thumbsdown fast_orange
+
+  Compare and inspect:
+    jjk show purple
+    jjk diff purple orange
+    jjk diff --atomic purple fast_purple
+
+  Recovery:
+    jjk backup before_refactor
+    jjk undo
+    jjk redo
+    jjk load before_refactor
+
+  Advanced flow:
+    jjk return orange
+    jjk pick fast_purple
+    jjk nice fast_orange
+    jjk update jjk/purple purple
 `);
 }
 
@@ -680,7 +717,7 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
     return;
   }
 
-  if (command === "help" || command === "--help" || command === "-h") {
+  if (command === "help" || command === "/help" || command === "--help" || command === "-h" || command === "-help") {
     printHelp();
     return;
   }
@@ -778,6 +815,18 @@ export async function runCli(argv: string[], cwd: string): Promise<void> {
           includeDeleted,
         }),
       );
+      return;
+    }
+    case "graph": {
+      const repo = loadRepo(root);
+      const colorize = shouldColorizeOutput();
+      const includeDeleted = args.includes("--deleted");
+      const currentState = resolveCurrentState(root, repo.states);
+      console.log(renderLogGraph(repo, {
+        currentStateId: currentState?.id ?? null,
+        colorize,
+        includeDeleted,
+      }));
       return;
     }
     case "show": {

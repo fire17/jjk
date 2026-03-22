@@ -214,6 +214,90 @@ export function renderGraph(
   return ["* current state    ^ branch leaf", "", ...lines].join("\n");
 }
 
+export function renderLogGraph(
+  repo: RepoData,
+  options?: {
+    currentStateId?: string | null;
+    colorize?: boolean;
+    includeDeleted?: boolean;
+  },
+): string {
+  const visibleStates = repo.states
+    .filter((state) => options?.includeDeleted === true || !isDeletedState(state))
+    .slice()
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+
+  if (visibleStates.length === 0) {
+    return "No states saved yet.";
+  }
+
+  const visibleStateIds = new Set(visibleStates.map((state) => state.id));
+  const stateById = new Map(visibleStates.map((state) => [state.id, state] as const));
+  const leafStateIds = resolveBranchLeafStateIds(visibleStates.slice().reverse(), repo);
+
+  function visibleParentId(state: StateRecord): string | null {
+    let parentId = state.parentStateId;
+    while (parentId) {
+      if (visibleStateIds.has(parentId)) {
+        return parentId;
+      }
+      parentId = stateById.get(parentId)?.parentStateId ?? null;
+    }
+    return null;
+  }
+
+  const active: string[] = [];
+  const lines: string[] = [];
+
+  for (const state of visibleStates) {
+    if (!active.includes(state.id)) {
+      active.push(state.id);
+    }
+
+    const column = active.indexOf(state.id);
+    const graphPrefix = active
+      .map((_, index) => (index === column ? "*" : "|"))
+      .join(" ");
+    const decorations: string[] = [];
+    if (state.id === options?.currentStateId) {
+      decorations.push("current");
+    }
+    if (leafStateIds.has(state.id)) {
+      decorations.push("leaf");
+    }
+    const decorationText = decorations.length > 0 ? ` [${decorations.join(", ")}]` : "";
+    const line = formatStateGraphLine(
+      `${graphPrefix} ${shortStateId(state.id)} [${state.kind}] ${stateLabelWithMarkers(state)} (${stateDisplayBranch(state)})${decorationText}`,
+      state,
+    );
+    lines.push(
+      colorizeBranchLine(
+        line,
+        stateDisplayBranch(state),
+        options?.colorize === true,
+        leafStateIds.has(state.id),
+        state.id === options?.currentStateId,
+      ),
+    );
+
+    const parentId = visibleParentId(state);
+    if (!parentId) {
+      active.splice(column, 1);
+      continue;
+    }
+
+    const parentColumn = active.indexOf(parentId);
+    if (parentColumn === -1) {
+      active[column] = parentId;
+      continue;
+    }
+
+    active.splice(column, 1);
+  }
+
+  return lines.join("\n");
+}
+
 export function renderStateTable(
   states: StateRecord[],
   options?: {

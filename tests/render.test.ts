@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { renderGraph, renderStateChoiceTable, renderStateSummary, renderStateTable } from "../src/render";
+import { renderGraph, renderLogGraph, renderStateChoiceTable, renderStateSummary, renderStateTable } from "../src/render";
 import type { RepoData } from "../src/types";
 
 describe("renderGraph", () => {
@@ -807,5 +807,127 @@ describe("renderGraph", () => {
     expect(graph).toContain("first line of a very long graph message");
     expect(graph).toContain("...");
     expect(graph).not.toContain("\nsecond line should never break");
+  });
+
+  test("renders a git-log-style jjk graph", () => {
+    const repo: RepoData = {
+      version: 1,
+      safeSpaceId: "safe1234",
+      createdAt: "2026-03-22T00:00:00.000Z",
+      updatedAt: "2026-03-22T00:00:00.000Z",
+      settings: {
+        watchDebounceMs: 1200,
+        autoStatePrefix: "auto",
+      },
+      states: [
+        {
+          id: "main1111",
+          kind: "save",
+          label: "main",
+          description: "main",
+          createdAt: "2026-03-22T00:00:00.000Z",
+          branch: "main",
+          continuationBranch: null,
+          lane: "main",
+          commit: "aaaa1111",
+          parentCommit: null,
+          parentStateId: null,
+          tags: [],
+          stats: { changedFiles: 1 },
+        },
+        {
+          id: "green222",
+          kind: "new",
+          label: "green",
+          description: "green",
+          createdAt: "2026-03-22T00:01:00.000Z",
+          branch: "jjk/green",
+          continuationBranch: "jjk/green",
+          lane: "jjk/green",
+          commit: "bbbb2222",
+          parentCommit: "aaaa1111",
+          parentStateId: "main1111",
+          tags: [],
+          stats: { changedFiles: 1 },
+        },
+        {
+          id: "purple33",
+          kind: "new",
+          label: "purple",
+          description: "purple",
+          createdAt: "2026-03-22T00:02:00.000Z",
+          branch: "jjk/purple",
+          continuationBranch: "jjk/purple",
+          lane: "jjk/purple",
+          commit: "cccc3333",
+          parentCommit: "bbbb2222",
+          parentStateId: "green222",
+          tags: [],
+          stats: { changedFiles: 1 },
+        },
+        {
+          id: "orange44",
+          kind: "new",
+          label: "orange",
+          description: "orange",
+          createdAt: "2026-03-22T00:03:00.000Z",
+          branch: "jjk/orange",
+          continuationBranch: "jjk/orange",
+          lane: "jjk/orange",
+          commit: "dddd4444",
+          parentCommit: "bbbb2222",
+          parentStateId: "green222",
+          tags: [],
+          stats: { changedFiles: 1 },
+        },
+      ],
+      lanes: {
+        main: {
+          name: "main",
+          branch: "main",
+          baseRef: "main",
+          createdAt: "2026-03-22T00:00:00.000Z",
+          updatedAt: "2026-03-22T00:00:00.000Z",
+          currentStateId: "main1111",
+        },
+        green: {
+          name: "green",
+          branch: "jjk/green",
+          baseRef: "main",
+          createdAt: "2026-03-22T00:01:00.000Z",
+          updatedAt: "2026-03-22T00:01:00.000Z",
+          currentStateId: "green222",
+        },
+        purple: {
+          name: "purple",
+          branch: "jjk/purple",
+          baseRef: "jjk/green",
+          createdAt: "2026-03-22T00:02:00.000Z",
+          updatedAt: "2026-03-22T00:02:00.000Z",
+          currentStateId: "purple33",
+        },
+        orange: {
+          name: "orange",
+          branch: "jjk/orange",
+          baseRef: "jjk/green",
+          createdAt: "2026-03-22T00:03:00.000Z",
+          updatedAt: "2026-03-22T00:03:00.000Z",
+          currentStateId: "orange44",
+        },
+      },
+      branchLaneMap: {
+        main: "main",
+        "jjk/green": "green",
+        "jjk/purple": "purple",
+        "jjk/orange": "orange",
+      },
+      timeshifts: [],
+      freezes: [],
+    };
+
+    const graph = renderLogGraph(repo, { currentStateId: "orange44" });
+    expect(graph).toContain("* orange44 [new] orange (jjk/orange) [current, leaf]");
+    expect(graph).toContain("| * purple33 [new] purple (jjk/purple) [leaf]");
+    expect(graph).toContain("* green222 [new] green (jjk/green) [leaf]");
   });
 });

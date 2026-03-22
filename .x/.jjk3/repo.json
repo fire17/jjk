@@ -1,0 +1,484 @@
+{
+  "version": 1,
+  "safeSpaceId": "50456359",
+  "createdAt": "2026-03-22T10:26:01.048Z",
+  "updatedAt": "2026-03-22T11:17:29.598Z",
+  "settings": {
+    "watchDebounceMs": 1200,
+    "autoStatePrefix": "auto",
+    "showWorkspaceSnapshotsInGit": false
+  },
+  "states": [
+    {
+      "id": "b63381ee",
+      "kind": "save",
+      "label": "feat: ship jjk v1",
+      "description": "feat: ship jjk v1",
+      "createdAt": "2026-03-22T01:50:20+02:00",
+      "branch": "main",
+      "lane": "main",
+      "continuationBranch": null,
+      "commit": "f21f71ec46555b16036d701d0e50b7912a197b8d",
+      "parentCommit": null,
+      "parentStateId": null,
+      "tags": [],
+      "stats": {
+        "changedFiles": 0
+      },
+      "metadata": {
+        "gitCommit": "f21f71ec46555b16036d701d0e50b7912a197b8d"
+      }
+    },
+    {
+      "id": "f478dd50",
+      "kind": "save",
+      "label": "docs: add cover image to readme",
+      "description": "docs: add cover image to readme",
+      "createdAt": "2026-03-22T01:52:48+02:00",
+      "branch": "main",
+      "lane": "main",
+      "continuationBranch": null,
+      "commit": "ca5fad02757067ecb48eb79cdc710dbd3842f3d9",
+      "parentCommit": "f21f71ec46555b16036d701d0e50b7912a197b8d",
+      "parentStateId": "b63381ee",
+      "tags": [],
+      "stats": {
+        "changedFiles": 0
+      },
+      "metadata": {
+        "gitCommit": "ca5fad02757067ecb48eb79cdc710dbd3842f3d9"
+      }
+    },
+    {
+      "id": "9fca96d2",
+      "kind": "save",
+      "label": "jjk branches improvement",
+      "description": "jjk branches improvement",
+      "createdAt": "2026-03-22T02:52:45+02:00",
+      "branch": "main",
+      "lane": "main",
+      "continuationBranch": null,
+      "commit": "55abd232dff715d4d60e2e045276ec04f285a061",
+      "parentCommit": "ca5fad02757067ecb48eb79cdc710dbd3842f3d9",
+      "parentStateId": "f478dd50",
+      "tags": [],
+      "stats": {
+        "changedFiles": 0
+      },
+      "metadata": {
+        "gitCommit": "55abd232dff715d4d60e2e045276ec04f285a061"
+      }
+    },
+    {
+      "id": "94153bef",
+      "kind": "save",
+      "label": "nice looking branches - but not fully confirm...",
+      "description": "nice looking branches - but not fully confirmed yet",
+      "createdAt": "2026-03-22T04:06:05+02:00",
+      "branch": "main",
+      "lane": "main",
+      "continuationBranch": null,
+      "commit": "62551366bba088238805de3ab7b14852f461d868",
+      "parentCommit": "55abd232dff715d4d60e2e045276ec04f285a061",
+      "parentStateId": "9fca96d2",
+      "tags": [],
+      "stats": {
+        "changedFiles": 0
+      },
+      "metadata": {
+        "gitCommit": "62551366bba088238805de3ab7b14852f461d868"
+      }
+    },
+    {
+      "id": "0aa14a84",
+      "kind": "save",
+      "label": "untracked files on main: 6255136 nice looking...",
+      "description": "untracked files on main: 6255136 nice looking branches - but not fully confirmed yet",
+      "createdAt": "2026-03-22T04:19:13+02:00",
+      "branch": "main",
+      "lane": "main",
+      "continuationBranch": null,
+      "commit": "fe4cdeb0334d93b3386443dfd0794b0d7d35db1b",
+      "parentCommit": null,
+      "parentStateId": null,
+      "tags": [],
+      "stats": {
+        "changedFiles": 0
+      },
+      "metadata": {
+        "gitCommit": "fe4cdeb0334d93b3386443dfd0794b0d7d35db1b"
+      }
+    },
+    {
+      "id": "1d45fb12",
+      "kind": "save",
+      "label": "index on main: 6255136 nice looking branches ...",
+      "description": "index on main: 6255136 nice looking branches - but not fully confirmed yet",
+      "createdAt": "2026-03-22T04:19:13+02:00",
+      "branch": "main",
+      "lane": "main",
+      "continuationBranch": null,
+      "commit": "2e6805f2f1c0470b0721b38d1f81d3395cb74c65",
+      "parentCommit": "62551366bba088238805de3ab7b14852f461d868",
+      "parentStateId": "94153bef",
+      "tags": [],
+      "stats": {
+        "changedFiles": 0
+      },
+      "metadata": {
+        "gitCommit": "2e6805f2f1c0470b0721b38d1f81d3395cb74c65"
+      }
+    },
+    {
+      "id": "5cc9ba22",
+      "kind": "save",
+      "label": "On main: codex: branch-and-message experiments",
+      "description": "On main: codex: branch-and-message experiments",
+      "createdAt": "2026-03-22T04:19:13+02:00",
+      "branch": "main",
+      "lane": "main",
+      "continuationBranch": null,
+      "commit": "ef18c7730eaa3f963e4e234ce6fe0bd8697e4f3e",
+      "parentCommit": "62551366bba088238805de3ab7b14852f461d868",
+      "parentStateId": "94153bef",
+      "tags": [],
+      "stats": {
+        "changedFiles": 0
+      },
+      "metadata": {
+        "gitCommit": "ef18c7730eaa3f963e4e234ce6fe0bd8697e4f3e"
+      }
+    },
+    {
+      "id": "58ff8614",
+      "kind": "save",
+      "label": "AWESOME BEAUTIFULL WORKING BRANCHES COMPATIBL...",
+      "description": "AWESOME BEAUTIFULL WORKING BRANCHES COMPATIBLE WITH GIT!!!",
+      "createdAt": "2026-03-22T05:26:08+02:00",
+      "branch": "main",
+      "lane": "main",
+      "continuationBranch": null,
+      "commit": "bd897491513394dec86c46d43f35ff6f910f9bc5",
+      "parentCommit": "62551366bba088238805de3ab7b14852f461d868",
+      "parentStateId": "94153bef",
+      "tags": [],
+      "stats": {
+        "changedFiles": 0
+      },
+      "metadata": {
+        "gitCommit": "bd897491513394dec86c46d43f35ff6f910f9bc5"
+      }
+    },
+    {
+      "id": "d8681532",
+      "kind": "save",
+      "label": "return properly to leaves but when returning ...",
+      "description": "return properly to leaves but when returning to non leaves it detaches head and after saving changes it creates a new branch: might be good as is",
+      "createdAt": "2026-03-22T06:02:30+02:00",
+      "branch": "main",
+      "lane": "main",
+      "continuationBranch": null,
+      "commit": "328e1c44a3bafa4169ea2799011518158e39a42e",
+      "parentCommit": "bd897491513394dec86c46d43f35ff6f910f9bc5",
+      "parentStateId": "58ff8614",
+      "tags": [],
+      "stats": {
+        "changedFiles": 0
+      },
+      "metadata": {
+        "gitCommit": "328e1c44a3bafa4169ea2799011518158e39a42e"
+      }
+    },
+    {
+      "id": "e2892767",
+      "kind": "save",
+      "label": "Working with detached heads for non leaves, g...",
+      "description": "Working with detached heads for non leaves, git status always clear",
+      "createdAt": "2026-03-22T07:26:38+02:00",
+      "branch": "main",
+      "lane": "main",
+      "continuationBranch": null,
+      "commit": "efacf29642ba776ea3752ebdc6d57917a2a8141d",
+      "parentCommit": "328e1c44a3bafa4169ea2799011518158e39a42e",
+      "parentStateId": "d8681532",
+      "tags": [],
+      "stats": {
+        "changedFiles": 0
+      },
+      "metadata": {
+        "gitCommit": "efacf29642ba776ea3752ebdc6d57917a2a8141d"
+      }
+    },
+    {
+      "id": "85d73ed4",
+      "kind": "save",
+      "label": "WORKING LATEST GOOD BRANCHING BEHAVIOR FOR SA...",
+      "description": "WORKING LATEST GOOD BRANCHING BEHAVIOR FOR SAVE, NICE, + ADDED JJK UPDATE BRANCH",
+      "createdAt": "2026-03-22T09:19:22+02:00",
+      "branch": "main",
+      "lane": "main",
+      "continuationBranch": null,
+      "commit": "b4e3d917bc19d3f9fb7113aa2e735040cd781a10",
+      "parentCommit": "efacf29642ba776ea3752ebdc6d57917a2a8141d",
+      "parentStateId": "e2892767",
+      "tags": [],
+      "stats": {
+        "changedFiles": 0
+      },
+      "metadata": {
+        "gitCommit": "b4e3d917bc19d3f9fb7113aa2e735040cd781a10"
+      }
+    },
+    {
+      "id": "44afecf6",
+      "kind": "save",
+      "label": "WORKING GOOD CHECKPOINT IT SEEMS",
+      "description": "WORKING GOOD CHECKPOINT IT SEEMS",
+      "createdAt": "2026-03-22T10:23:03+02:00",
+      "branch": "main",
+      "lane": "main",
+      "continuationBranch": null,
+      "commit": "31602c308639f20c792fc05c7d6686cdfe9e0099",
+      "parentCommit": "b4e3d917bc19d3f9fb7113aa2e735040cd781a10",
+      "parentStateId": "85d73ed4",
+      "tags": [],
+      "stats": {
+        "changedFiles": 0
+      },
+      "metadata": {
+        "gitCommit": "31602c308639f20c792fc05c7d6686cdfe9e0099"
+      }
+    },
+    {
+      "id": "0503f121",
+      "kind": "save",
+      "label": "WORKING GREAATTT!!! need to still check/impro...",
+      "description": "WORKING GREAATTT!!! need to still check/improve undo and stash",
+      "createdAt": "2026-03-22T11:29:34+02:00",
+      "branch": "main",
+      "lane": "main",
+      "continuationBranch": null,
+      "commit": "e18a95b1efc10f14ffd24b54aa5a0a3927eff142",
+      "parentCommit": "31602c308639f20c792fc05c7d6686cdfe9e0099",
+      "parentStateId": "44afecf6",
+      "tags": [],
+      "stats": {
+        "changedFiles": 0
+      },
+      "metadata": {
+        "gitCommit": "e18a95b1efc10f14ffd24b54aa5a0a3927eff142",
+        "message": "expand jjk state workflow with undo/recover, stash, latest, and richer state views\n\nAdd state inspection with jjk show and jjk diff (including atomic mode).\nAdd delete/recover and safer undo behavior that rewinds branch latest unless -rm is used.\nAdd stash states on dedicated stash branches and visible star markers in jjk see.\nAdd jjk lastest/latest for resolving the latest saved state of a branch.\nImprove jjk see with datetime, star markers, deleted-state handling, and aligned metadata columns.\nAdd regression coverage for undo, show/diff, latest, and star/stash flows."
+      }
+    },
+    {
+      "id": "8a39173f",
+      "kind": "save",
+      "label": "AMAZING WORK!!!!!!!! undo/redo works nicely +...",
+      "description": "AMAZING WORK!!!!!!!! undo/redo works nicely + backups are good and working!!!!!!!!!!!! MAJOR MILESTONE",
+      "createdAt": "2026-03-22T11:50:20+02:00",
+      "branch": "main",
+      "lane": "main",
+      "continuationBranch": null,
+      "commit": "10c6404a3ac42cd2bf394ab4c50ba5cdc9385d93",
+      "parentCommit": "e18a95b1efc10f14ffd24b54aa5a0a3927eff142",
+      "parentStateId": "0503f121",
+      "tags": [],
+      "stats": {
+        "changedFiles": 0
+      },
+      "metadata": {
+        "gitCommit": "10c6404a3ac42cd2bf394ab4c50ba5cdc9385d93"
+      }
+    },
+    {
+      "id": "faa17642",
+      "kind": "save",
+      "label": "added snake_test to test a mock directory wit...",
+      "description": "added snake_test to test a mock directory with a snake game evolution of jjk",
+      "createdAt": "2026-03-22T11:53:47+02:00",
+      "branch": "main",
+      "lane": "main",
+      "continuationBranch": null,
+      "commit": "c38301834568f7cde07121d4e24ea35c05f5f686",
+      "parentCommit": "10c6404a3ac42cd2bf394ab4c50ba5cdc9385d93",
+      "parentStateId": "8a39173f",
+      "tags": [],
+      "stats": {
+        "changedFiles": 0
+      },
+      "metadata": {
+        "gitCommit": "c38301834568f7cde07121d4e24ea35c05f5f686"
+      }
+    },
+    {
+      "id": "b50a6d93",
+      "kind": "save",
+      "label": "main [save] (main) - jjk",
+      "description": "main [save] (main) - jjk",
+      "createdAt": "2026-03-22T12:02:42+02:00",
+      "branch": "main",
+      "lane": "main",
+      "continuationBranch": null,
+      "commit": "40eac6a7b3ea2f2d7eb288fa47369e24ea3ff90f",
+      "parentCommit": "c38301834568f7cde07121d4e24ea35c05f5f686",
+      "parentStateId": "faa17642",
+      "tags": [],
+      "stats": {
+        "changedFiles": 0
+      },
+      "metadata": {
+        "gitCommit": "40eac6a7b3ea2f2d7eb288fa47369e24ea3ff90f",
+        "message": "Kind: save\nLabel: main\nDescription: main\nMessage: none\nBranch: main\nLane: main\nContinuation-Branch: none"
+      }
+    },
+    {
+      "id": "7bf0a4cd",
+      "kind": "save",
+      "label": "some_file_main",
+      "description": "some_file_main",
+      "createdAt": "2026-03-22T12:30:54+02:00",
+      "branch": "main",
+      "lane": "main",
+      "continuationBranch": null,
+      "commit": "4e45fedae0531d47f5fbd35d9702cb1ec520dcfe",
+      "parentCommit": "40eac6a7b3ea2f2d7eb288fa47369e24ea3ff90f",
+      "parentStateId": "b50a6d93",
+      "tags": [],
+      "stats": {
+        "changedFiles": 0
+      },
+      "metadata": {
+        "gitCommit": "4e45fedae0531d47f5fbd35d9702cb1ec520dcfe"
+      }
+    },
+    {
+      "id": "356ad48e",
+      "kind": "save",
+      "label": "some_file_main2",
+      "description": "some_file_main2",
+      "createdAt": "2026-03-22T12:53:35+02:00",
+      "branch": "main",
+      "lane": "main",
+      "continuationBranch": null,
+      "commit": "2a3d27a6009956a56b5a4e3566cdeb8eb7ee7da8",
+      "parentCommit": "4e45fedae0531d47f5fbd35d9702cb1ec520dcfe",
+      "parentStateId": "7bf0a4cd",
+      "tags": [],
+      "stats": {
+        "changedFiles": 0
+      },
+      "metadata": {
+        "gitCommit": "2a3d27a6009956a56b5a4e3566cdeb8eb7ee7da8"
+      }
+    },
+    {
+      "id": "a389c39b",
+      "kind": "save",
+      "label": "INCREDIBLE!!!!!!! WORKING BACKWARD COMPETABIL...",
+      "description": "INCREDIBLE!!!!!!! WORKING BACKWARD COMPETABILITY WITH EXISTING GIT PROJECTS!!!!, COMMITS LOAD AS STATES + JJK GRAPH VIEW",
+      "createdAt": "2026-03-22T12:54:15+02:00",
+      "branch": "main",
+      "lane": "main",
+      "continuationBranch": null,
+      "commit": "1d8ed2015b40d01047f12c6e2326a4c5fc9fc597",
+      "parentCommit": "2a3d27a6009956a56b5a4e3566cdeb8eb7ee7da8",
+      "parentStateId": "356ad48e",
+      "tags": [
+        "star"
+      ],
+      "stats": {
+        "changedFiles": 0
+      },
+      "metadata": {
+        "gitCommit": "1d8ed2015b40d01047f12c6e2326a4c5fc9fc597"
+      }
+    },
+    {
+      "id": "a605c69e",
+      "kind": "star",
+      "label": "memorable anchor state",
+      "description": "memorable anchor state",
+      "createdAt": "2026-03-22T10:55:23.259Z",
+      "branch": "deleted/memorable_anchor_state",
+      "lane": "deleted/memorable_anchor_state",
+      "continuationBranch": null,
+      "commit": "91c7cceaf2c534376708913c7d170a4583da80d6",
+      "parentCommit": "1d8ed2015b40d01047f12c6e2326a4c5fc9fc597",
+      "parentStateId": "a389c39b",
+      "tags": [
+        "star"
+      ],
+      "stats": {
+        "changedFiles": 0
+      },
+      "metadata": {
+        "gitCommit": "91c7cceaf2c534376708913c7d170a4583da80d6",
+        "deletedAt": "2026-03-22T10:59:16.855Z",
+        "deletedBranch": "deleted/memorable_anchor_state",
+        "deletedLocation": {
+          "branch": "main",
+          "lane": "main",
+          "continuationBranch": "jjk/memorable_anchor_state",
+          "parentStateId": "a389c39b",
+          "wasLaneCurrent": true
+        }
+      }
+    },
+    {
+      "id": "be561f8a",
+      "kind": "save",
+      "label": "WORKING STAR / UNSTAR + RLHF THUMBSUP AND THU...",
+      "description": "WORKING STAR / UNSTAR + RLHF THUMBSUP AND THUMBSDOWN ICONS for states",
+      "createdAt": "2026-03-22T13:15:10+02:00",
+      "branch": "main",
+      "lane": "main",
+      "continuationBranch": null,
+      "commit": "4468f3b5092cf302bea970e8b02d68ccaada0d8e",
+      "parentCommit": "1d8ed2015b40d01047f12c6e2326a4c5fc9fc597",
+      "parentStateId": "a389c39b",
+      "tags": [],
+      "stats": {
+        "changedFiles": 0
+      },
+      "metadata": {
+        "gitCommit": "4468f3b5092cf302bea970e8b02d68ccaada0d8e"
+      }
+    }
+  ],
+  "lanes": {
+    "main": {
+      "name": "main",
+      "branch": "main",
+      "baseRef": "main",
+      "createdAt": "2026-03-22T10:26:01.078Z",
+      "updatedAt": "2026-03-22T11:17:29.586Z",
+      "currentStateId": "be561f8a"
+    },
+    "jjk/memorable_anchor_state": {
+      "name": "jjk/memorable_anchor_state",
+      "branch": "jjk/memorable_anchor_state",
+      "baseRef": "main",
+      "createdAt": "2026-03-22T10:55:23.259Z",
+      "updatedAt": "2026-03-22T10:55:23.259Z",
+      "currentStateId": "a605c69e"
+    }
+  },
+  "branchLaneMap": {
+    "main": "main",
+    "jjk/memorable_anchor_state": "jjk/memorable_anchor_state"
+  },
+  "allowMainBranchSave": false,
+  "returnContext": null,
+  "currentStateHistory": {
+    "entries": [
+      "b50a6d93",
+      "7bf0a4cd",
+      "356ad48e",
+      "a389c39b",
+      "be561f8a"
+    ],
+    "index": 4
+  },
+  "timeshifts": [],
+  "freezes": []
+}

@@ -82,6 +82,7 @@ describe("store", () => {
     const repo = loadRepo(repoCwd);
 
     expect(repo.states.map((state) => state.description)).toEqual(["root", "green", "purple", "orange"]);
+    expect(repo.states.map((state) => state.kind)).toEqual(["git", "git", "git", "git"]);
     expect(repo.states.map((state) => state.branch)).toEqual(["main", "main", "purple", "main"]);
     expect(repo.currentStateHistory?.entries).toEqual([repo.states[2]?.id]);
     expect(run(["git", "symbolic-ref", "--quiet", "--short", "HEAD"], { cwd: repoCwd }).stdout).toBe("purple");
@@ -112,6 +113,7 @@ describe("store", () => {
     const imported = repo.states.find((state) => state.commit === purpleHead);
 
     expect(imported).toBeTruthy();
+    expect(imported?.kind).toBe("git");
     expect(imported?.description).toBe("purple raw git");
     expect(imported?.branch).toBe("purple");
     expect(imported?.parentStateId).toBe(green.id);
