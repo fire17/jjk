@@ -57,7 +57,7 @@ discover → lock → reconcile → resolve → plan → durable prepare
 
 Command handlers supply typed intent and policy; they cannot manually sequence stores and backends. Mutation-capable adapter calls require an unforgeable `PreparedOperation<'lock>` issued only after the lock and durable prepare. Projection writes require the journal transaction context, so projections cannot advance independently of events.
 
-Transparent Git passthrough is deliberately different: it invokes Git without first creating JJK semantic state, then performs bounded reconciliation only when command classification and repository facts require it.
+Transparent Git passthrough is deliberately different: it invokes Git without creating JJK semantic state, locks, observation, or reconciliation in that process. The next JJK-native/enhanced invocation performs bounded reconciliation when repository facts require it.
 
 ### REP-004 — SQLite WAL behind storage ports
 
