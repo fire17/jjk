@@ -21,5 +21,37 @@ impl OperationPlan { pub fn new(id:OperationId,command:impl Into<String>,request
 #[derive(Copy,Clone,Debug,Eq,PartialEq,Serialize,Deserialize,JsonSchema)] #[serde(rename_all="kebab-case")] pub enum ReceiptStatus { Observed,NoOp,Partial,Failed,Reversed }
 #[derive(Clone,Debug,Eq,PartialEq,Serialize,Deserialize,JsonSchema)] pub struct EffectReceipt { pub effect_id:EffectId,pub status:ReceiptStatus,pub before:Hash256,pub after:Hash256,pub details:Vec<(String,String)> }
 #[derive(Clone,Debug,Eq,PartialEq,Serialize,Deserialize,JsonSchema)] pub struct OperationReceipt { pub operation_id:OperationId,pub phase:OperationPhase,pub before:RepositoryFingerprint,pub after:Option<RepositoryFingerprint>,pub effects:Vec<EffectReceipt>,pub verification:Option<bool>,pub warnings:Vec<String>,pub recovery_instruction:Option<String> }
+/// Classification produced by re-inspecting an interrupted effect.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecoveryClassification {
+    NotApplied,
+    AppliedExactly,
+    AppliedThenAdvanced,
+    ConflictPaused,
+    Diverged,
+    Uninspectable,
+}
+
+/// Safe next action selected from observed recovery facts.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecoveryAction {
+    CompleteForward,
+    VerifyThenCommit,
+    CompensateByCas,
+    AwaitResolution,
+    StopForRepair,
+}
+
+/// Auditable recovery decision; classification and action are kept distinct.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct RecoveryDecision {
+    pub effect_id: EffectId,
+    pub classification: RecoveryClassification,
+    pub action: RecoveryAction,
+    pub observed_digest: Option<Hash256>,
+    pub reason: String,
+}
 
 #[cfg(test)] mod tests {use super::*;#[test]fn operation_phase_validity(){assert_eq!(OperationPhase::Prepared.transition(OperationTransition::ApplyStarted).unwrap(),OperationPhase::Applying);assert_eq!(OperationPhase::Applying.transition(OperationTransition::VerificationStarted).unwrap(),OperationPhase::Verifying);assert_eq!(OperationPhase::Verifying.transition(OperationTransition::Committed).unwrap(),OperationPhase::Committed);assert!(OperationPhase::Committed.transition(OperationTransition::AbortStarted).is_err());assert!(OperationPhase::Prepared.transition(OperationTransition::Committed).is_err());}}
