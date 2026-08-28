@@ -9,7 +9,9 @@ pub mod domain;
 pub mod error;
 pub mod render;
 
-mod adapters;
-mod ports;
+#[doc(hidden)]
+pub mod adapters;
+#[doc(hidden)]
+pub mod ports;
 
 pub use error::{DomainError, JjkError};
