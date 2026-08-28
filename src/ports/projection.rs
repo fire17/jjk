@@ -16,6 +16,16 @@ pub(crate) struct ProjectionSnapshot {
     pub records: Vec<ProjectionRecord>,
 }
 
+/// One deterministic projection write tied to an event in the same append batch.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ProjectionUpdate {
+    pub projection_name: String,
+    pub reducer_version: u32,
+    pub key: Vec<u8>,
+    pub value: Vec<u8>,
+    pub event_index: usize,
+}
+
 pub(crate) trait ProjectionStore {
     type Error;
 

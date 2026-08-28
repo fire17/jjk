@@ -16,7 +16,7 @@ The required cross-layer mutation protocol is:
 
 SQLite with WAL is the default local journal because it supplies an embedded Rust-compatible implementation, checksums/integrity checks, transactions across the journal and projections, indexed queries, online backup APIs, and crash recovery without a service. It is not treated as universally safe:
 
-- WAL requires reliable local shared-memory and file-lock semantics; JJK MUST detect unsupported/network filesystems and use SQLite rollback-journal mode with an exclusive writer, or refuse mutation when durability cannot be proved.
+- WAL requires reliable local shared-memory and file-lock semantics. JJK MUST probe the actual control directory and refuse semantic mutation with `JJK-E-STORAGE-UNSAFE` when durability cannot be proved; v0.1 has no unproven rollback-journal fallback. Transparent Git and proven read-only JJK inspection remain available.
 - Copying only the main `.sqlite` file while WAL is active is not a backup. JJK MUST use the SQLite backup API or `VACUUM INTO`, then verify the result.
 - SQLite cannot atomically commit with Git refs, JJ operations, or arbitrary files. Durable operation preparation plus deterministic reconciliation closes that seam; pretending it is a distributed transaction would not.
 
@@ -153,7 +153,7 @@ All domain identities are UUIDv7 newtypes stored as 16-byte BLOBs. External text
 | `StateId` | `st_` | Created by `StateCaptured`; remains stable through annotation/archive/recovery |
 | `AttemptId` | `at_` | A semantic line of exploration; not a Git branch name |
 | `BranchId` | `br_` | JJK identity for a branch binding; refname may change |
-| `WorktreeId` | `ws_` | JJK identity for a worktree binding; path may change |
+| `WorkspaceId` | `ws_` | JJK identity for a checkout/worktree binding; path may change |
 | `CompositionId` | `cmp_` | One semantic composition hyperedge |
 | `CandidateId` | `cand_` | One external or composition candidate |
 | `PromotionId` | `prm_` | One canonical promotion or rollback lineage |
@@ -163,6 +163,7 @@ All domain identities are UUIDv7 newtypes stored as 16-byte BLOBs. External text
 | `ArchiveId` | `arc_` | One archive/recovery lifecycle |
 | `DeltaId` | `dlt_` | One exact atomic delta identity |
 | `BackupId`, `TimeshiftId` | `bak_`, `tsh_` | Stable recovery workflow identities |
+| `LeaseId`, `WorkerId`, `HandoffId` | `lea_`, `wrk_`, `hnd_` | Workspace authority, actor process, and typed transfer identities |
 | `GitObjectId` | algorithm-qualified hexadecimal | Immutable Git fact; never parsed as a JJK ID |
 | `JjChangeId` / `JjCommitId` | validated adapter-owned text | Optional JJ facts |
 | label, alias, branch refname, path | validated domain value | Mutable human/external names; never identity |
@@ -574,8 +575,8 @@ The operation reducer enforces this transition table; every other transition is 
 | `applying` | `VerificationStarted` | `verifying` |
 | `verifying` | domain facts + `OperationCommitted` in one transaction | `committed` |
 | `aborting` | `OperationAborted` | `aborted` |
-| any nonterminal | `RepairRequired` | `repair_required` |
-| `repair_required` | `RepairResumed` | `applying` or `verifying`, as the recorded strategy declares |
+| any nonterminal except `repair_required` | `RepairRequired` | `repair_required` |
+| `repair_required` | `RepairResumed` | `applying`, `verifying`, or `aborting`, as the recorded strategy declares |
 
 `committed` and `aborted` are terminal. `EffectObserved` is idempotent only when its canonical receipt bytes match the previously observed receipt for that effect; a mismatch is `EffectReceiptConflict`.
 
@@ -746,7 +747,7 @@ Queries MUST state when archived nodes, unsupported adapters, missing artifacts,
 | Missing Git object backing a state | `git cat-file`/adapter verification fails | Keep state/event, mark substrate availability broken, attempt configured fetch/restore, and refuse activation/composition until repaired |
 | Missing content-addressed artifact | Artifact hash/path check fails | Keep referencing event, mark evidence/material unavailable, restore from backup if possible; never silently drop provenance |
 | Unsupported/new event version | Registry lookup fails | Read-only raw diagnostics; return `ReaderTooOld`; upgrade before mutation/replay past that sequence |
-| Unsupported filesystem locking/WAL | startup capability probe and lock test | Use rollback journal + exclusive writer if proven safe, otherwise refuse mutation with remediation |
+| Unsupported filesystem locking/WAL | startup capability probe and lock test | Refuse semantic mutation with remediation; transparent Git and proven read-only inspection remain available |
 | Disk full during append | SQLite transaction error | Roll back event+projection transaction; prepared external operation remains repairable |
 | Timeshift adapter unavailable | capability discovery | Preview and record skipped component; restore supported components only after explicit plan acceptance |
 

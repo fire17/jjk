@@ -19,8 +19,16 @@ pub struct Passthrough {
 impl Passthrough {
     /// Construct a passthrough request without parsing any Git arguments.
     #[must_use]
-    pub fn new(executable: impl Into<PathBuf>, argv: Vec<OsString>, cwd: impl Into<PathBuf>) -> Self {
-        Self { executable: executable.into(), argv, cwd: cwd.into() }
+    pub fn new(
+        executable: impl Into<PathBuf>,
+        argv: Vec<OsString>,
+        cwd: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            executable: executable.into(),
+            argv,
+            cwd: cwd.into(),
+        }
     }
 
     fn process(&self) -> InheritedProcess {

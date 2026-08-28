@@ -1,107 +1,80 @@
-//! Pure plans for attempts, optional Git branch bindings, worktrees, and lease ownership.
+//! Pure plans for semantic forks, ordinary branches, isolated worktrees, and leases.
 
+use crate::domain::{
+    ActorId, AttemptId, GitBranchRef, RepoRelativePath, StateId, WorkerId, WorkspaceId,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::domain::{ActorId, AttemptId, StateId, WorkspaceId};
-
-/// Requested substrate materialization for a semantic attempt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ForkMaterialization {
-    /// Semantic attempt only; Git branch/worktree are not identities and need not exist.
     AttemptOnly,
-    /// Bind an ordinary Git branch, but keep the current checkout unchanged.
-    Branch { refname: String },
-    /// Bind a branch and provision an isolated linked worktree.
+    Branch {
+        refname: GitBranchRef,
+    },
     Worktree {
-        /// Ordinary branch refname.
-        refname: String,
-        /// Repository-relative locator chosen by the application policy.
-        relative_locator: String,
-        /// Workspace identity reserved for the checkout.
+        refname: GitBranchRef,
+        relative_locator: RepoRelativePath,
         workspace_id: WorkspaceId,
     },
 }
-
-/// Fork intent after identifiers are reserved.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ForkRequest {
-    /// New semantic attempt.
     pub attempt_id: AttemptId,
-    /// Exact state at which the sibling begins.
     pub from_state: StateId,
-    /// Non-empty objective.
     pub objective: String,
-    /// Actor receiving mutation ownership when a worktree is provisioned.
     pub owner: ActorId,
-    /// Stable worker/session diagnostic name.
-    pub worker: String,
-    /// Optional substrate materialization.
+    pub worker_id: Option<WorkerId>,
     pub materialization: ForkMaterialization,
 }
-
-/// Typed fork/worktree effect; adapters translate these, never the planner.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ForkEffect {
-    /// Record a semantic sibling attempt.
     RecordAttempt {
         attempt_id: AttemptId,
         from_state: StateId,
         objective: String,
     },
-    /// Compare-and-swap create/update a branch at the source state's exact object.
-    BindBranch {
+    BindBranchCas {
         attempt_id: AttemptId,
-        refname: String,
+        refname: GitBranchRef,
         target_state: StateId,
+        expected_absent: bool,
     },
-    /// Provision a checkout. No cwd claim is made; the result is a typed locator.
     ProvisionWorktree {
         workspace_id: WorkspaceId,
         attempt_id: AttemptId,
-        refname: String,
-        relative_locator: String,
+        refname: GitBranchRef,
+        relative_locator: RepoRelativePath,
+        target_state: StateId,
     },
-    /// Establish exclusive workspace ownership/lease after provisioning verifies.
     AcquireWorkspaceLease {
         workspace_id: WorkspaceId,
         owner: ActorId,
-        worker: String,
+        worker_id: WorkerId,
     },
 }
-
-/// Pure fork plan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DirectoryHandoffPlan {
+    pub workspace_id: WorkspaceId,
+    pub relative_locator: RepoRelativePath,
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ForkPlan {
-    /// New attempt identity.
     pub attempt_id: AttemptId,
-    /// Original source state remains unchanged.
     pub source_state: StateId,
-    /// Path to return or print for an explicit shell/editor handoff.
-    pub directory_handoff: Option<String>,
-    /// Ordered typed effects.
+    pub source_checkout_mutated: bool,
+    pub directory_handoff: Option<DirectoryHandoffPlan>,
     pub effects: Vec<ForkEffect>,
 }
-
-/// Fork planning error.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ForkPlanError {
-    /// Objective is required for future actors.
     #[error("fork objective must not be empty")]
     EmptyObjective,
-    /// Branch refname is required when materializing a branch.
-    #[error("branch refname must not be empty")]
-    EmptyRefname,
-    /// Worktree locator must be repository-relative and non-empty.
-    #[error("worktree locator must be repository-relative and non-empty")]
-    InvalidWorktreeLocator,
-    /// Worker identity is required before leasing a worktree.
-    #[error("worker identity must not be empty")]
-    EmptyWorker,
+    #[error("a worktree fork requires a stable worker ID")]
+    MissingWorker,
 }
 
-/// Plans a fork without mutating or moving the source checkout.
 pub fn plan_fork(request: ForkRequest) -> Result<ForkPlan, ForkPlanError> {
     let objective = request.objective.trim().to_owned();
     if objective.is_empty() {
@@ -115,11 +88,11 @@ pub fn plan_fork(request: ForkRequest) -> Result<ForkPlan, ForkPlanError> {
     let directory_handoff = match request.materialization {
         ForkMaterialization::AttemptOnly => None,
         ForkMaterialization::Branch { refname } => {
-            let refname = require_refname(refname)?;
-            effects.push(ForkEffect::BindBranch {
+            effects.push(ForkEffect::BindBranchCas {
                 attempt_id: request.attempt_id,
                 refname,
                 target_state: request.from_state,
+                expected_absent: true,
             });
             None
         }
@@ -128,103 +101,101 @@ pub fn plan_fork(request: ForkRequest) -> Result<ForkPlan, ForkPlanError> {
             relative_locator,
             workspace_id,
         } => {
-            let refname = require_refname(refname)?;
-            let relative_locator = validate_locator(relative_locator)?;
-            let worker = request.worker.trim().to_owned();
-            if worker.is_empty() {
-                return Err(ForkPlanError::EmptyWorker);
-            }
+            let worker_id = request.worker_id.ok_or(ForkPlanError::MissingWorker)?;
             effects.extend([
-                ForkEffect::BindBranch {
+                ForkEffect::BindBranchCas {
                     attempt_id: request.attempt_id,
                     refname: refname.clone(),
                     target_state: request.from_state,
+                    expected_absent: true,
                 },
                 ForkEffect::ProvisionWorktree {
                     workspace_id,
                     attempt_id: request.attempt_id,
                     refname,
                     relative_locator: relative_locator.clone(),
+                    target_state: request.from_state,
                 },
                 ForkEffect::AcquireWorkspaceLease {
                     workspace_id,
                     owner: request.owner,
-                    worker,
+                    worker_id,
                 },
             ]);
-            Some(relative_locator)
+            Some(DirectoryHandoffPlan {
+                workspace_id,
+                relative_locator,
+            })
         }
     };
     Ok(ForkPlan {
         attempt_id: request.attempt_id,
         source_state: request.from_state,
+        source_checkout_mutated: false,
         directory_handoff,
         effects,
     })
 }
 
-fn require_refname(refname: String) -> Result<String, ForkPlanError> {
-    if refname.trim().is_empty() {
-        Err(ForkPlanError::EmptyRefname)
-    } else {
-        Ok(refname)
-    }
-}
-
-fn validate_locator(locator: String) -> Result<String, ForkPlanError> {
-    let path = std::path::Path::new(&locator);
-    let escapes = path.is_absolute()
-        || path.components().any(|component| {
-            matches!(
-                component,
-                std::path::Component::ParentDir
-                    | std::path::Component::RootDir
-                    | std::path::Component::Prefix(_)
-            )
-        });
-    if locator.trim().is_empty() || escapes {
-        Err(ForkPlanError::InvalidWorktreeLocator)
-    } else {
-        Ok(locator)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    use crate::domain::NativePath;
     fn request(materialization: ForkMaterialization) -> ForkRequest {
         ForkRequest {
             attempt_id: AttemptId::new_v7(),
             from_state: StateId::new_v7(),
-            objective: "try faster parser".into(),
+            objective: "try parser".into(),
             owner: ActorId::new_v7(),
-            worker: "parser-agent".into(),
+            worker_id: Some(WorkerId::new_v7()),
             materialization,
         }
     }
-
     #[test]
-    fn semantic_attempt_does_not_prematurely_create_branch() {
-        let plan = plan_fork(request(ForkMaterialization::AttemptOnly)).unwrap();
-        assert_eq!(plan.effects.len(), 1);
-        assert!(matches!(plan.effects[0], ForkEffect::RecordAttempt { .. }));
-        assert_eq!(plan.directory_handoff, None);
+    fn attempt_only_has_no_substrate_effect() {
+        let p = plan_fork(request(ForkMaterialization::AttemptOnly)).unwrap();
+        assert_eq!(p.effects.len(), 1);
+        assert!(!p.source_checkout_mutated);
+        assert!(p.directory_handoff.is_none())
     }
-
     #[test]
-    fn worktree_plan_leases_isolated_checkout_and_returns_handoff_path() {
+    fn worktree_is_pinned_to_source_and_does_not_claim_cwd_change() {
         let source = StateId::new_v7();
-        let mut input = request(ForkMaterialization::Worktree {
-            refname: "jjk/parser-fast".into(),
-            relative_locator: ".jjk/worktrees/parser-fast".into(),
+        let ws = WorkspaceId::new_v7();
+        let mut r = request(ForkMaterialization::Worktree {
+            refname: GitBranchRef::new(b"refs/heads/jjk/parser".to_vec()).unwrap(),
+            relative_locator: RepoRelativePath::new(
+                NativePath::unix(b".worktrees/parser".to_vec()).unwrap(),
+            )
+            .unwrap(),
+            workspace_id: ws,
+        });
+        r.from_state = source;
+        let p = plan_fork(r).unwrap();
+        assert_eq!(p.source_state, source);
+        assert!(!p.source_checkout_mutated);
+        assert_eq!(
+            p.directory_handoff.as_ref().map(|h| h.workspace_id),
+            Some(ws)
+        );
+        assert!(p.effects.iter().any(
+            |e| matches!(e,ForkEffect::ProvisionWorktree{target_state,..}if *target_state==source)
+        ));
+        assert!(p.effects.iter().any(
+            |e| matches!(e,ForkEffect::AcquireWorkspaceLease{workspace_id,..}if *workspace_id==ws)
+        ))
+    }
+    #[test]
+    fn worktree_requires_stable_worker() {
+        let mut r = request(ForkMaterialization::Worktree {
+            refname: GitBranchRef::new(b"refs/heads/jjk/parser".to_vec()).unwrap(),
+            relative_locator: RepoRelativePath::new(
+                NativePath::unix(b".worktrees/parser".to_vec()).unwrap(),
+            )
+            .unwrap(),
             workspace_id: WorkspaceId::new_v7(),
         });
-        input.from_state = source;
-        let plan = plan_fork(input).unwrap();
-        assert_eq!(plan.source_state, source);
-        assert_eq!(plan.directory_handoff.as_deref(), Some(".jjk/worktrees/parser-fast"));
-        assert!(plan.effects.iter().any(|effect| matches!(effect, ForkEffect::AcquireWorkspaceLease { .. })));
-        assert!(plan.effects.iter().all(|effect| !matches!(effect, ForkEffect::RecordAttempt { from_state, .. } if *from_state != source)));
+        r.worker_id = None;
+        assert_eq!(plan_fork(r), Err(ForkPlanError::MissingWorker))
     }
 }

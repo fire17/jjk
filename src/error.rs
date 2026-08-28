@@ -6,7 +6,10 @@ pub enum DomainError {
     #[error("invalid {kind}: {reason}")]
     InvalidValue { kind: &'static str, reason: String },
     #[error("identifier prefix mismatch: expected {expected}, found {found}")]
-    IdPrefixMismatch { expected: &'static str, found: String },
+    IdPrefixMismatch {
+        expected: &'static str,
+        found: String,
+    },
     #[error("identifier is not a UUIDv7")]
     NotUuidV7,
     #[error("duplicate {kind} `{id}`")]

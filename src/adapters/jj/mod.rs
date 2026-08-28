@@ -2,5 +2,5 @@
 
 mod observe;
 
-pub use observe::probe;
 pub use crate::ports::jj::JjCapabilities;
+pub use observe::{JjCapabilityReport, JjCapabilityState, JjCli, probe};

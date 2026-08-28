@@ -34,16 +34,21 @@ A Git-valid result is never reversed merely because SQLite completion is uncerta
 ├── locks/
 │   ├── lifecycle.lock
 │   ├── repository.lock
-│   └── worktrees/<worktree-id>.lock
+│   └── workspaces/<workspace-id>.lock
 ├── recovery/<operation-id>/
 │   ├── manifest.cbor
 │   ├── receipts/<effect-ordinal>.cbor
 │   ├── indexes/
 │   └── blobs/<sha256>
-└── worktrees/<worktree-id>/
+├── workspaces/<workspace-id>/
+├── migrations/{legacy-v1,receipts}/
+├── backups/
+├── freezes/
+├── sync/quarantine/
+└── quarantine/
 ```
 
-All linked worktrees share `state.sqlite3`. Runtime `-wal`/`-shm` files are never copied as a backup; use SQLite online backup or `VACUUM INTO`. WAL plus `synchronous=FULL` is allowed only where locking/shared-memory/durability probes pass. Otherwise use proven rollback-journal exclusive mode or refuse mutation.
+All linked worktrees share `state.sqlite3`. Runtime `-wal`/`-shm` files are never copied as a backup; use SQLite online backup or `VACUUM INTO`. WAL plus `synchronous=FULL` is enabled only after locking/shared-memory/durability probes pass on the actual control directory. Otherwise JJK v0.1 refuses semantic mutation with `JJK-E-STORAGE-UNSAFE`; transparent Git and proven read-only JJK inspection remain available.
 
 Recovery files use temp-file → file `fsync` → atomic rename → parent-directory `fsync`; directories/files are private. Manifests use relative platform-byte-preserving paths and hashes, not ambient absolute paths.
 
@@ -168,29 +173,7 @@ enum OperationStatus {
 }
 ```
 
-Exact storage spellings:
-
-```text
-prepared | applying | awaiting_resolution | verifying |
-committed | aborting | aborted | repair_required
-```
-
-```text
-(no row) ─OperationPrepared─> prepared
-prepared ─ApplyStarted─> applying
-prepared ─AbortStarted─> aborting
-applying ─ConflictPaused─> awaiting_resolution
-applying ─VerificationStarted─> verifying
-applying ─AbortStarted─> aborting
-applying ─RepairRequired─> repair_required
-awaiting_resolution ─RepairResumed(forward)─> applying
-awaiting_resolution ─AbortStarted─> aborting
-verifying ─OperationCommitted─> committed
-verifying ─RepairRequired─> repair_required
-aborting ─OperationAborted─> aborted
-aborting ─RepairRequired─> repair_required
-repair_required ─RepairResumed(forward|verify|rollback)─> applying|verifying|aborting
-```
+Exact storage spellings are `prepared | applying | awaiting_resolution | verifying | committed | aborting | aborted | repair_required`. The canonical reducer and complete transition table live in `event-model.md` §EM-D007; implementations and tests MUST use that single specification rather than a second copy.
 
 `committed` and `aborted` are terminal. Reversal/reconciliation is a new operation. Lifecycle transitions are event-backed and atomically projected; direct SQL status edits are forbidden.
 
@@ -223,9 +206,9 @@ struct EffectSpec {
 }
 
 enum ResourceKey {
-    GitObject(GitObjectId), GitRef(GitRefNameBytes), GitHead(WorktreeId),
-    GitIndex(WorktreeId), WorktreePath(WorktreeId, PlatformPathBytes),
-    JjStore(RepoId), JjWorkspace(WorktreeId), InternalPath(PortableRelativePath),
+    GitObject(GitObjectId), GitRef(GitRefNameBytes), GitHead(WorkspaceId),
+    GitIndex(WorkspaceId), WorktreePath(WorkspaceId, PlatformPathBytes),
+    JjStore(RepoId), JjWorkspace(WorkspaceId), InternalPath(PortableRelativePath),
     Journal(RepoId),
 }
 ```
@@ -239,7 +222,7 @@ struct CrossLayerFingerprint {
     journal: JournalFingerprint,
     git: GitFingerprint,
     jj: JjFingerprint,                  // Disabled | Enabled(...)
-    worktrees: BTreeMap<WorktreeId, WorktreeFingerprint>,
+    workspaces: BTreeMap<WorkspaceId, WorkspaceFingerprint>,
     internal_files: BTreeMap<PortableRelativePath, FileFingerprint>,
     digest: Hash256,
 }
@@ -260,8 +243,8 @@ struct GitFingerprint {
     refs_digest: Hash256,
 }
 
-struct WorktreeFingerprint {
-    worktree_id: WorktreeId,
+struct WorkspaceFingerprint {
+    workspace_id: WorkspaceId,
     git_dir_token: FileIdentity,
     root_token: FileIdentity,
     head: HeadFingerprint,
@@ -338,7 +321,7 @@ trait TransactionalAdapter {
 ```rust
 struct ConflictSnapshot {
     operation_id: OperationId,
-    worktree_id: WorktreeId,
+    workspace_id: WorkspaceId,
     reserved_resources: BTreeSet<ResourceKey>,
     base_head: HeadFingerprint,
     conflict_index: IndexFingerprint,
@@ -358,7 +341,7 @@ Acquire in this order; release in reverse:
 
 1. **Lifecycle gate** (`lifecycle.lock`): normal commands shared; migration, restore, generation replacement, destructive repair exclusive.
 2. **Repository writer** (`repository.lock`): one JJK-native/Git-enhanced coordinator per Git common directory.
-3. **Worktree leases**, sorted by raw `WorktreeId` bytes.
+3. **Workspace leases**, sorted by raw `WorkspaceId` bytes.
 4. **Short SQLite write transaction**: `BEGIN IMMEDIATE`, append/reduce/check/commit, release before adapters.
 5. **Native Git/JJ locks**, only within one adapter call while no SQLite transaction is open.
 

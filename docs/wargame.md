@@ -774,7 +774,7 @@ Expected safe result: verified terminal operation or mutation-disabled safe mode
 ### `PB-010` — Symptom: `JJK-E-MIGRATION-VERIFY` or migration warnings include “lossy”
 
 1. Confirm the legacy source digest is unchanged and note the backup path from the receipt.
-2. Run `jjk migrate --report <migration-id>` and inspect record-count, topology, reachability, and raw-field warnings.
+2. Run `jjk setup --migration=check --json` and inspect the reported migration ID, record counts, topology, reachability, and raw-field warnings.
 3. Fix the transformer or source inconsistency; create a new staged migration ID.
 4. Do not edit the failed staged DB into compliance.
 5. **Stop and escalate** if the source changed after hashing or the backup digest differs.

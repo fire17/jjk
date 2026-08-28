@@ -17,16 +17,16 @@ Exit: every stable claim has an observable contract and an owner module.
 1. Rust library + `jjk` binary with typed errors and response envelope.
 2. Root/capability discovery and byte-transparent Git passthrough.
 3. SQLite migration runner, event append, projection replay, operation records.
-4. `jjk init`, `jjk status`, `jjk see --json` through the real layers.
+4. `jjk setup`, `jjk status`, `jjk see --format json` through the real layers.
 5. Fixture harness invokes the compiled binary in real temporary repositories.
 
-Exit: init/status/passthrough work end to end; a deleted projection rebuilds exactly.
+Exit: setup/status/passthrough work end to end; a deleted projection rebuilds exactly.
 
 ## Stage 2 — Indestructible state loop
 
 1. Capture Git/index/worktree facts without dropping staged, unstaged, untracked, ignored, executable, symlink, or rename semantics.
-2. Implement free-form capture, `save`, `step`, `nice` annotation policy.
-3. Implement deterministic graph, current/show/diff/story queries.
+2. Implement explicit capture through `save`, `step`, and `nice` annotation policy.
+3. Implement deterministic graph plus `current`/`see`/`story` queries; native Git retains `show` and `diff`.
 4. Implement exact return and navigation with sibling-future preservation.
 5. Fault inject every durable boundary; implement startup recovery.
 

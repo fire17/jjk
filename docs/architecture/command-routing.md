@@ -27,15 +27,14 @@ It applies to JJK mutations and enhanced commands that mutate JJK. It **never ru
 
 | Class | v0.1 commands | Contract |
 |---|---|---|
-| JJK-native | `save`, `step`, `nice`, `star`, `unstar`, `see`, `return`, `pick`, `fork`, `freeze`, `timeshift`, `current`, `story`, `back`, `forward`, `up`, `down`, `recover`, `undo`, `redo`, `promote`, `doctor`, `help`, `completion`, `version` | JJK grammar; mutations use the cross-layer protocol |
-| Enhanced Git-compatible | `init`, `status` | Git grammar/behavior remains the base; JJK adds the documented postcondition/view |
+| JJK-native | `setup`, `save`, `step`, `nice`, `see`, `return`, `pick`, `fork`, `freeze`, `current`, `story`, `back`, `forward`, `up`, `down`, `archive`, `recover`, `undo`, `redo`, `backup`, `load`, `handoff`, `validate`, `doctor`, `completion`, `help`, `version` | JJK grammar; mutations use the cross-layer protocol |
+| Enhanced Git-compatible | `status` | Git status remains the base; JJK owns only its explicit orientation forms described by CR-D08 |
 | Explicit Git escape | `git -- <git-argv...>` | Strip exactly `git --`, then invoke real Git with the remaining arguments unchanged |
-| Implicit save | exactly one valid-UTF-8, non-option argument containing Unicode whitespace and no leading Git globals, e.g. `jjk "baseline before parser rewrite"` | Equivalent to `jjk save -- ...`; deliberately narrow |
-| Transparent passthrough | every other invocation | Replace only executable `jjk` with verified real `git` |
+| Transparent passthrough | every other invocation, including `init` and unknown text | Replace only executable `jjk` with verified real `git` |
 
 New JJK-native names should not overlap Git built-ins. A collision requires an explicit `EnhancedGit` registry decision and compatibility suite. Registered JJK commands win over user-defined Git aliases; a colliding alias remains reachable through `jjk git -- save ...`.
 
-`init` extends Git initialization: Git runs first with its own arguments; only after success does JJK discover the resulting repository and initialize its journal. `status` follows CR-D08. No other Git spelling is enhanced in v0.1. In particular, `branch`, `checkout`, `clone`, `diff`, `log`, `rebase`, `restore`, `show`, `stash`, `worktree`, `fetch`, `pull`, and `push` are transparent Git.
+`status` follows CR-D08. No other Git spelling is enhanced in v0.1. In particular, `init`, `branch`, `checkout`, `clone`, `diff`, `log`, `rebase`, `restore`, `show`, `stash`, `worktree`, `fetch`, `pull`, and `push` are transparent Git. Safe-space initialization is the non-colliding native command `jjk setup [path]`; ordinary `jjk init` stays byte-transparent Git.
 
 ### CR-D02 — Routing is syntax-only
 
@@ -79,9 +78,7 @@ route(argv):
        => JjkNative(spec, original globals, original tail)
   6. exact verb has EnhancedGit registry entry
        => EnhancedGit(spec, original argv, spans)
-  7. no globals; argv is one UTF-8 non-option element containing whitespace
-       => JjkNative(ImplicitSave, that element)
-  8. otherwise
+  7. otherwise
        => GitPassthrough(original argv, UnownedVerb)
 ```
 
@@ -95,8 +92,8 @@ There is no fallback state creation after step 8.
 | `jjk clone URL dst` | exact `git clone URL dst`, valid outside repositories |
 | `jjk future-git-command x` | Git decides built-in, alias, helper, or unknown |
 | `jjk rebsae` | Git's normal error; no JJK state |
-| `jjk "baseline before parser rewrite"` | native implicit save |
-| `jjk baseline` | Git alias/helper/unknown; one-word state requires `jjk save baseline` |
+| `jjk "baseline before parser rewrite"` | Git decides alias/helper/unknown; descriptions require `jjk save -- "baseline before parser rewrite"` |
+| `jjk baseline` | Git alias/helper/unknown; state creation requires `jjk save baseline` |
 | `jjk save -- -leading-dash` | native literal description |
 | `jjk rebase -- --literal` | both delimiters reach Git unchanged |
 | `jjk git -- status` | native Git status, bypassing enhancement |
@@ -167,7 +164,7 @@ Interactive-shell functions/aliases named `git` are not executable Git features 
 
 ### CR-D11 — Clone works outside repositories
 
-Routing precedes discovery. From `/tmp`, `jjk clone URL project` directly becomes `git clone URL project`. JJK requires no parent repository, creates no `.jjk`, rewrites no destination, and does not auto-enroll the clone. The user opts in later with `jjk init`. The same applies to bare clone, `init-db`, `ls-remote`, credentials, version, help, and other outside-repository operations.
+Routing precedes discovery. From `/tmp`, `jjk clone URL project` directly becomes `git clone URL project`. JJK requires no parent repository, creates no JJK control root, rewrites no destination, and does not auto-enroll the clone. The user opts in later with `jjk setup project`. The same applies to bare clone, `init-db`, `ls-remote`, credentials, version, help, and other outside-repository operations.
 
 ### CR-D12 — Recursion prevention by executable identity
 
@@ -194,9 +191,9 @@ No recursion environment marker is injected because transparent environment pari
 | CR-I06 | Passthrough preserves cwd, environment, handles, TTY, signals, and exit disposition. |
 | CR-I07 | `jjk clone` works outside repositories and never auto-enrolls its result. |
 | CR-I08 | `jjk rebase` is interactive native Git, including editor, prompts, conflicts, and exits. |
-| CR-I09 | `status` is the only v0.1 enhanced inspection spelling; possible machine forms emit native output only. |
+| CR-I09 | `status` is the only v0.1 enhanced Git spelling. `jjk status`, `jjk status --format json`, and its aliases `--json`, `--width`, and `--no-color` are JJK-owned orientation forms; unknown/status-porcelain flags passthrough unchanged to Git. |
 | CR-I10 | A name collision never makes Git unreachable; `jjk git --` is the lossless escape. |
-| CR-I11 | A typo cannot create a state; one-word descriptions require `jjk save`. |
+| CR-I11 | A typo or unknown text cannot create a state; descriptions require `jjk save -- <text>`. |
 | CR-I12 | Transparent mutations reconcile later as external facts, never as JJK transactions. |
 | CR-I13 | The router introduces no environment marker or hidden stdio protocol. |
 | CR-I14 | Real Git cannot resolve to running JJK file identity. |
@@ -227,7 +224,6 @@ pub enum PrefixScan { Command(ParsedGitPrefix), NoCommand, TerminalGitOption, In
 
 pub enum RoutePlan<'a> {
     JjkNative { spec: &'static CommandSpec, globals: &'a [OsString], args: &'a [OsString] },
-    ImplicitSave { description: &'a str },
     EnhancedGit { spec: &'static CommandSpec, original_argv: &'a [OsString], prefix: ParsedGitPrefix },
     GitPassthrough { argv: &'a [OsString], reason: PassthroughReason },
 }
@@ -262,8 +258,8 @@ pub fn route(invocation: &RawInvocation, registry: &CommandRegistry)
 | CR-F06 | Git absent | stderr diagnostic, exit 127; no initialization |
 | CR-F07 | Git resolves to JJK | stop before exec, exit 126 |
 | CR-F08 | JJK metadata corrupt during passthrough | never read it; Git runs |
-| CR-F09 | Status enrichment fails | stderr warning; preserve Git success/output |
-| CR-F10 | Future status machine option | any status tail suppresses enhancement |
+| CR-F09 | Status enrichment fails | return a typed JJK error for owned orientation forms; `jjk git -- status` remains available |
+| CR-F10 | Unknown or Git-machine status option | entire original invocation transparently executes Git |
 | CR-F11 | Interactive Git needs terminal | inherited handles; no proxy |
 | CR-F12 | Git launches editor/pager/credential/signing | preserve environment/process behavior |
 | CR-F13 | Downstream pipe closes | native `SIGPIPE`; no wrapper output |
@@ -277,7 +273,7 @@ pub fn route(invocation: &RawInvocation, registry: &CommandRegistry)
 
 All passthrough checks are differential against native Git in equivalent fresh fixtures, without normalizing whitespace, ANSI, streams, or signal results.
 
-1. **Enhanced status:** interactive `jjk status` emits native status then orientation. `jjk status --porcelain=v2 -z` is byte/status-identical to Git. `jjk git -- status` has no JJK section.
+1. **Enhanced status:** `jjk status` emits native status truth plus orientation. `jjk status --format json` and `--json` emit the common JJK envelope. Known JJK presentation flags remain enhanced under TTY or redirection. Unknown options and Git machine forms such as `--porcelain=v2 -z` are byte/status-identical passthrough; `jjk git -- status` always has no JJK section.
 2. **Native rebase:** PTY fixture with controlled sequence editor compares editor argv, TTY, conflicts, output, signals, and exit; no JJK metadata changes.
 3. **Native clone:** from empty non-repositories compare streams, exit, refs, files, modes, config; neither parent nor clone gains JJK metadata.
 4. **All unenhanced commands:** generate installed Git command inventory, exclude only `EnhancedGit`, and assert every remainder classifies passthrough; behavior matrices cover read, write, interactive, remote, plumbing, and outside-repo representatives, including a command unknown when JJK compiled.
@@ -286,7 +282,7 @@ All passthrough checks are differential against native Git in equivalent fresh f
 7. **Globals/delimiters:** cover attached/separate `-C` and `-c`, long values, pager flags, git-dir/work-tree, malformed value, unknown global, terminal globals, `jjk -- status`, and command-local `--`; original argv never changes.
 8. **Process parity:** PTY/pipe fixtures prove editor/pager, credential/askpass, NUL streams, stdout/stderr ordering, Unix signals/job control/`SIGPIPE`, Windows console-control/exit parity, and color under TTY, pipe, `NO_COLOR`, `TERM=dumb`, and Git config.
 9. **No side effects:** before/after passthrough compare JJK journal/projection absence or checksum+mtime; lock/temp absence; and no refs/config/hooks/index locks/commits/files beyond native Git.
-10. **Registry guard:** build-time comparison against oldest/newest supported Git inventories fails accidental native collisions. `status` and `init` are the only approved v0.1 overlaps.
+10. **Registry guard:** build-time comparison against oldest/newest supported Git inventories fails accidental native collisions. `status` is the only approved v0.1 overlap; `setup` owns JJK initialization while `init` remains Git.
 
 ## Explicit non-goals
 
@@ -295,14 +291,14 @@ All passthrough checks are differential against native Git in equivalent fresh f
 - Preserving arbitrary interactive-shell functions/aliases named `git`.
 - Recoloring, translating, or capturing Git output.
 - Treating unknown verbs as descriptions.
-- Enhancing redirected or argument-bearing status output.
+- Guessing ownership of unknown `status` flags. The explicit JJK set is `--format json`, `--json`, `--width`, and `--no-color`; every other tail is Git passthrough.
 - Reserving global `--`; only `jjk git -- ...` consumes routing tokens.
 - Injecting a recursion environment marker.
-- Claiming transparent behavior for the two deliberately enhanced spellings.
+- Claiming transparent behavior for the single deliberately enhanced spelling.
 - Dynamic plugins claiming top-level names in v0.1; they could steal future Git commands.
 
 ## User contract
 
-> If the word is a JJK semantic verb, JJK owns it. If it is `init` or `status`, JJK deliberately enhances Git. Everything else is Git, unchanged. When names collide, `jjk git -- ...` always reaches Git.
+> If the word is a JJK semantic verb, JJK owns it. If it is an owned `status` form, JJK deliberately enhances Git. Everything else is Git, unchanged. When names collide, `jjk git -- ...` always reaches Git.
 
-This proves `jjk status` is enhanced while `jjk rebase`, `jjk clone`, all present/future unenhanced Git commands, aliases, helpers, interactive commands, and unknown verbs retain native Git behavior.
+This proves `jjk status` is enhanced while `jjk init`, `jjk rebase`, `jjk clone`, all present/future unenhanced Git commands, aliases, helpers, interactive commands, and unknown verbs retain native Git behavior.

@@ -1,4 +1,4 @@
-//! Pure planning for `save`, free-form save sugar, `step`, and `nice`.
+//! Pure planning for explicit `save`, `step`, and `nice` captures.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -11,8 +11,6 @@ use crate::domain::{AttemptId, StateId, WorkspaceId};
 pub enum CaptureKind {
     /// Ordinary durable state.
     Save,
-    /// Free-form `jjk <words>` syntax; semantically identical to `Save`.
-    FreeForm,
     /// Small meaningful checkpoint.
     Step,
     /// A deliberately good, memorable waypoint.
@@ -20,10 +18,10 @@ pub enum CaptureKind {
 }
 
 impl CaptureKind {
-    /// Stable event value. Free-form syntax never becomes a distinct state kind.
+    /// Stable event value.
     pub const fn event_kind(self) -> &'static str {
         match self {
-            Self::Save | Self::FreeForm => "save",
+            Self::Save => "save",
             Self::Step => "step",
             Self::Nice => "nice",
         }
@@ -171,7 +169,11 @@ pub fn plan_capture(
     };
     let logical_parent = context.current_state;
     let preserved_future = diverges
-        .then(|| context.historical_return.map(|returned| returned.preserved_tip))
+        .then(|| {
+            context
+                .historical_return
+                .map(|returned| returned.preserved_tip)
+        })
         .flatten();
 
     let mut effects = vec![CaptureEffect::CaptureTree {
@@ -254,7 +256,12 @@ mod tests {
         assert_eq!(plan.target_attempt, original_attempt);
         assert_eq!(plan.preserved_future, None);
         assert!(!plan.creates_ordinary_branch);
-        assert!(!plan.effects.iter().any(|effect| matches!(effect, CaptureEffect::ForkAttempt { .. })));
+        assert!(
+            !plan
+                .effects
+                .iter()
+                .any(|effect| matches!(effect, CaptureEffect::ForkAttempt { .. }))
+        );
         assert_ne!(context.current_state, Some(purple));
     }
 
@@ -265,7 +272,7 @@ mod tests {
         let plan = plan_capture(
             &context,
             CaptureRequest {
-                kind: CaptureKind::FreeForm,
+                kind: CaptureKind::Save,
                 label: "orange".into(),
                 message: None,
                 state_id: StateId::new_v7(),
@@ -290,8 +297,8 @@ mod tests {
     }
 
     #[test]
-    fn capture_flavors_share_semantics_but_keep_event_kind() {
-        assert_eq!(CaptureKind::FreeForm.event_kind(), "save");
+    fn capture_flavors_keep_stable_event_kind() {
+        assert_eq!(CaptureKind::Save.event_kind(), "save");
         assert_eq!(CaptureKind::Step.event_kind(), "step");
         assert_eq!(CaptureKind::Nice.event_kind(), "nice");
     }

@@ -31,7 +31,10 @@ pub struct GitCli<R> {
 impl<R> GitCli<R> {
     /// Construct a Git adapter. `executable` may be an absolute path or a PATH lookup name.
     pub fn new(executable: impl Into<PathBuf>, runner: R) -> Self {
-        Self { executable: executable.into(), runner }
+        Self {
+            executable: executable.into(),
+            runner,
+        }
     }
 
     /// Selected real Git executable.
@@ -48,15 +51,35 @@ impl<R: ProcessRunner> GitCli<R> {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
+        self.run_with_env(cwd, args, BTreeMap::new())
+    }
+
+    /// Run a bounded plumbing query with an explicit environment delta.
+    pub(crate) fn run_with_env<I, S>(
+        &self,
+        cwd: &Path,
+        args: I,
+        env_delta: BTreeMap<OsString, Option<OsString>>,
+    ) -> Result<GitOutput, GitError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
         let request = CapturedProcess {
             executable: self.executable.clone(),
-            args: args.into_iter().map(|arg| arg.as_ref().to_os_string()).collect(),
+            args: args
+                .into_iter()
+                .map(|arg| arg.as_ref().to_os_string())
+                .collect(),
             cwd: cwd.to_path_buf(),
-            env_delta: BTreeMap::new(),
+            env_delta,
         };
         let output = self.runner.run_captured(&request)?;
         Ok(GitOutput {
-            exit_code: output.termination.code.unwrap_or(128 + output.termination.signal.unwrap_or(0)),
+            exit_code: output
+                .termination
+                .code
+                .unwrap_or(128 + output.termination.signal.unwrap_or(0)),
             stdout: output.stdout,
             stderr: output.stderr,
         })
@@ -87,7 +110,7 @@ pub(crate) fn trim_line(mut bytes: Vec<u8>) -> Vec<u8> {
     bytes
 }
 
-pub(crate) fn native(bytes: Vec<u8>, field: &'static str) -> Result<OsString, GitError> {
+pub(crate) fn native(bytes: Vec<u8>, _field: &'static str) -> Result<OsString, GitError> {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStringExt;
@@ -97,6 +120,9 @@ pub(crate) fn native(bytes: Vec<u8>, field: &'static str) -> Result<OsString, Gi
     {
         String::from_utf8(bytes)
             .map(OsString::from)
-            .map_err(|error| GitError::InvalidOutput { field, detail: error.to_string() })
+            .map_err(|error| GitError::InvalidOutput {
+                field,
+                detail: error.to_string(),
+            })
     }
 }

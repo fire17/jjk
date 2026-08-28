@@ -27,7 +27,7 @@ flowchart TD
   QUERY --> RENDER[Human/JSON/TUI renderers]
 ```
 
-The binary is stateless between invocations except for `.jjk/`. No daemon is required for correctness. Future UI/IDE daemons are adapters over the same library and typed API.
+The binary is stateless between invocations except for the repository-wide control root at `<git-common-dir>/jjk/`. No daemon is required for correctness. Future UI/IDE daemons are adapters over the same library and typed API.
 
 ## Mutation protocol
 
@@ -39,21 +39,31 @@ The operation journal records preconditions, intended effects, pre/post fingerpr
 
 ## Command boundary
 
-- JJK-native verbs are deliberately unlike Git: `save`, `step`, `nice`, `see`, `return`, `pick`, `fork`, `story`, `freeze`, `timeshift`.
-- Git names are claimed only for deliberate enhancements. Stable v0.1 claims `status`; `init` is JJK-native initialization. `diff`, `log`, `push`, and `pull` remain native Git passthrough until separate enhanced contracts are implemented and proven.
-- All other argv is transparently executed by the resolved real Git binary. This includes `clone`, `rebase`, `merge`, aliases, helpers, and future Git commands.
+- Stable JJK-native verbs are deliberately unlike Git: `setup`, `save`, `step`, `nice`, `see`, `return`, `pick`, `fork`, `freeze`, `current`, `story`, `back`, `forward`, `up`, `down`, `archive`, `recover`, `undo`, `redo`, `backup`, `load`, `handoff`, `validate`, `doctor`, and `completion`.
+- Git names are claimed only for deliberate enhancements. Stable v0.1 claims only explicit `status` forms. `init`, `diff`, `log`, `push`, and `pull` remain native Git passthrough.
+- All other argv is transparently executed by the resolved real Git binary. This includes `init`, `clone`, `rebase`, `merge`, aliases, helpers, and future Git commands.
 - Passthrough preserves original `OsString` arguments, cwd, environment, inherited stdin/stdout/stderr and TTY, signals, and exit status. It does not parse, normalize, reconcile, or post-process.
 
 ## On-disk contract
 
 ```text
-.jjk/
-├── store.sqlite3          # events, operations, projections, migrations
-├── lock                   # cross-process writer/recovery lock
-├── recovery/              # durable external-operation pre/post images
-├── bundles/               # freezes and explicit backups
-└── config.toml            # small human-editable policy/capability preferences
+<git-common-dir>/jjk/
+├── state.sqlite3
+├── locks/
+│   ├── lifecycle.lock
+│   ├── repository.lock
+│   └── workspaces/<workspace-id>.lock
+├── recovery/<operation-id>/
+├── workspaces/<workspace-id>/
+├── migrations/{legacy-v1,receipts}/
+├── backups/
+├── freezes/
+├── sync/quarantine/
+├── quarantine/
+└── config.toml
 ```
+
+All linked worktrees share this control root. A worktree-local `.jjk/` is legacy import input only and never authoritative.
 
 Internal Git refs use a versioned namespace such as `refs/jjk/states/<state-id>`. The schema and bundle manifest are versioned. A supported export/remove operation deletes only JJK-owned metadata/refs after preview and leaves a valid Git repository.
 

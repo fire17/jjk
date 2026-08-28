@@ -86,16 +86,18 @@ Every mutation ends with the new state/attempt, exact underlying Git/JJ effects,
 
 ## Structured surface
 
-Every command supports a versioned JSON envelope where automation is meaningful:
+Every non-passthrough command supports the canonical `jjk.command/v1` envelope from `docs/architecture/workspaces-agents.md` where automation is meaningful:
 
 ```json
 {
-  "schema": "jjk.cli/v1",
-  "command": "status",
-  "ok": true,
-  "data": {},
+  "schema": "jjk.command/v1",
+  "request_id": "req_...",
+  "operation_id": null,
+  "projection_version": 184,
+  "outcome": "observed",
+  "result": {},
   "warnings": [],
-  "recovery": null
+  "error": null
 }
 ```
 

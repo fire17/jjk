@@ -3,8 +3,8 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use crate::adapters::git::command::{GitError, native, trim_line};
 use crate::adapters::git::GitCli;
+use crate::adapters::git::command::{GitError, native, trim_line};
 use crate::ports::git::{GitCapabilities, GitPort};
 use crate::ports::process::ProcessRunner;
 use crate::ports::repository::ObjectFormat;
@@ -14,7 +14,10 @@ impl<R: ProcessRunner> GitCli<R> {
     pub fn capabilities(&self, cwd: &Path) -> Result<GitCapabilities, GitError> {
         let version = self.required(cwd, [OsString::from("--version")])?;
         let version = trim_line(version);
-        let version = version.strip_prefix(b"git version ").unwrap_or(&version).to_vec();
+        let version = version
+            .strip_prefix(b"git version ")
+            .unwrap_or(&version)
+            .to_vec();
         let version = native(version, "Git version")?;
 
         match self.discover(cwd) {

@@ -60,7 +60,7 @@ Every `gix` read has the same typed result as its Git CLI fallback. On open, dec
 
 The core semantic contract and golden outcomes are defined in Git-only mode. JJ mode MUST produce the same JJK states, logical edges, Git commits/trees, branch destinations, workspace outcome, and preservation guarantees unless an operation is explicitly advertised as JJ-only. Optional JJ identity and operation facts may differ.
 
-JJ is never auto-installed. Existing repositories are never silently converted. Enabling uses an explicit action (`jjk init --with-jj` or `jjk jj enable`) whose plan identifies colocation changes. Disabling JJ leaves a valid Git repository and retained JJK metadata.
+JJ is never auto-installed. Existing repositories are never silently converted. Enabling uses an explicit action (`jjk setup --with-jj` or a future owned `jjk jj enable`) whose plan identifies colocation changes. Disabling JJ leaves a valid Git repository and retained JJK metadata.
 
 ### AD-GIT-004 — only verified colocation enables the JJ adapter
 

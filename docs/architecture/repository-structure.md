@@ -164,7 +164,7 @@ JJK/
 │   │       ├── mod.rs                 # typed command enum/dispatch
 │   │       ├── init.rs                # initialize and import Git history
 │   │       ├── capture.rs             # save/step/nice
-│   │       ├── inspect.rs             # current/status/show/diff
+│   │       ├── inspect.rs             # current/enhanced status orientation
 │   │       ├── see.rs                 # graph/story read models
 │   │       ├── navigate.rs            # return/back/forward/up/down
 │   │       ├── fork.rs                # attempt/branch/worktree
@@ -338,22 +338,19 @@ pub struct EventEnvelopeV1 {
     pub payload: EventV1,
 }
 
+// Abridged illustration only. The exhaustive immutable payload registry and
+// operation-lifecycle event set are authoritative in event-model.md §EM-D005.
 pub enum EventV1 {
     SafeSpaceInitialized(SafeSpaceInitializedV1),
-    GitCommitObserved(GitCommitObservedV1),
+    OperationPrepared(OperationPreparedV1),
+    EffectObserved(EffectObservedV1),
+    OperationCommitted(OperationCommittedV1),
     StateCaptured(StateCapturedV1),
-    StateAnnotated(StateAnnotatedV1),
     AttemptForked(AttemptForkedV1),
-    StateActivated(StateActivatedV1),
     DeltaApplied(DeltaAppliedV1),
-    ValidationRecorded(ValidationRecordedV1),
-    CanonicalPromoted(CanonicalPromotedV1),
-    StateArchived(StateArchivedV1),
-    StateRecovered(StateRecoveredV1),
     BackupCreated(BackupCreatedV1),
-    RestoreApplied(RestoreAppliedV1),
+    // ...remaining registered variants; never use this excerpt as an exhaustive match.
 }
-```
 
 Persisted versions are immutable. A v2 is a new payload/envelope type with an explicit upgrader, not conditional interpretation of v1. Projections are disposable and rebuildable from the journal plus verified substrate facts. Operation records store phase, intended effects, observed effects, recovery boundary, and verification result.
 
@@ -420,7 +417,7 @@ Each stage creates only modules it uses and leaves the repository runnable. No e
 
 1. **Skeleton and fast process boundary:** package, `main`, facade, structured errors, CLI definition/routing, process adapter, transparent Git passthrough, and startup/passthrough contract tests. Establish native-argument fidelity before semantic commands.
 2. **Domain spine:** opaque IDs, state/attempt/workspace facts, event v1, operation phases, policies, ports, and compile-time boundary checks. Implement no speculative event types beyond the first vertical slice.
-3. **Durable core vertical slice:** SQLite migration 0001, journal/operation/projection adapters, lock/filesystem/clock/ID adapters, coordinator, repair, Git discovery/observation, `init`, `current`, and `status`. Fault-inject each transaction phase.
+3. **Durable core vertical slice:** SQLite migration 0001, journal/operation/projection adapters, lock/filesystem/clock/ID adapters, coordinator, repair, Git discovery/observation, `setup`, `current`, and `status`. Fault-inject each transaction phase.
 4. **Meaningful state loop:** capture (`save`/`step`/`nice`), external Git reconciliation, exact `return`, `show`/`diff`, and archive/recover. Import legacy `.jjk/repo.json` only after the target event model works.
 5. **Topology and composition:** attempt/fork/worktree, graph read model/rendering, navigation history, exact atomic pick, canonical snake regression, concurrent-writer fixtures.
 6. **Whole-control recovery:** undo/redo, backup/load/freeze, migration snapshots, corrupt-store corpus, restoration drills, and generated manifest/event schemas.

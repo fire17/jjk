@@ -161,7 +161,7 @@ Unclaimed top-level argv and explicit `jjk git -- <args...>` preserve:
 - signals and terminal process-group behavior;
 - Git's exit code or signal termination.
 
-On Unix the preferred implementation is `execvp` after resolving the Git executable, so no wrapper remains to distort signals or streams. Because an exec cannot append a post-command event, transparent passthrough is observed and reconciled by the next JJK command or watcher. It cannot be combined with `--json`; callers wanting structured JJK semantics use a Git-enhanced command instead.
+On Unix the preferred implementation is `execvp` after resolving the Git executable, so no wrapper remains to distort signals or streams. Because an exec cannot append a post-command event, transparent passthrough is observed and reconciled by the next JJK-native or Git-enhanced command. Passthrough does not consume JJK output flags; callers wanting structured JJK semantics use a claimed command.
 
 ## 3. Invariants
 
@@ -200,7 +200,7 @@ No user-space tool can prevent an uncooperative same-user process from opening a
 
 ## 4. Data and API shapes
 
-All stable IDs are typed UUIDv7 values with a domain prefix. Examples: `att_...`, `wsp_...`, `wrk_...`, `lea_...`, `bnd_...`, `hnd_...`, `val_...`, `op_...`. Human labels are mutable and never accepted where an unambiguous ID is required by automation.
+All stable IDs are typed UUIDv7 values with a domain prefix registered in `event-model.md` §EM-D004. Relevant forms are `at_...`, `ws_...`, `wrk_...`, `lea_...`, `br_...`, `hnd_...`, `ver_...`, and `op_...`. Human labels are mutable and never accepted where an unambiguous ID is required by automation.
 
 Repository paths and process arguments are lossless OS values, not assumed UTF-8:
 
@@ -799,7 +799,7 @@ prints the new path and an honest instruction. It does not say “entered worktr
 For scripting:
 
 ```sh
-cd -- "$(jjk workspace enter wsp_... --print-path)"
+cd -- "$(jjk workspace enter ws_... --print-path)"
 ```
 
 `--print-path` writes exactly one path plus a newline to stdout, writes diagnostics to stderr, and returns nonzero without printing a path on failure.
@@ -871,9 +871,9 @@ Retries with the same idempotency key return the committed result or current rep
 
 | Command | Class | Machine result |
 |---|---|---|
-| `jjk attempt create --from <state-id> --name <label> --owner <actor-id> --worktree --scope <pathspec> --format json` | Git-enhanced | `Attempt`, `Workspace`, lease capability locator, `DirectoryHandoff`. |
-| `jjk attempt park|resume|reject <attempt-id> --format json` | JJK-native, or Git-enhanced when provisioning is needed | New lifecycle event and projection. |
-| `jjk workspace provision <attempt-id> --mode writable-primary|read-only-review --format json` | Git-enhanced | Workspace and directory handoff. |
+| `jjk attempt create --from <state-id> --name <label> --owner <actor-id> --worktree --scope <pathspec> --format json` | JJK-native mutation | `Attempt`, `Workspace`, lease capability locator, `DirectoryHandoff`. |
+| `jjk attempt park|resume|reject <attempt-id> --format json` | JJK-native mutation | New lifecycle event and projection. |
+| `jjk workspace provision <attempt-id> --mode writable-primary|read-only-review --format json` | JJK-native mutation | Workspace and directory handoff. |
 | `jjk workspace inspect <workspace-id> --format json` | JJK-native observation | Registered vs observed manifest and divergence. |
 | `jjk workspace enter <workspace-id> --print-path` | JJK-native | One validated path only. |
 | `jjk workspace release <workspace-id> --lease <proof> --format json` | JJK-native | Released lease; files unchanged. |
@@ -884,14 +884,14 @@ Retries with the same idempotency key return the committed result or current rep
 | `jjk lease reclaim <lease-id> --if-generation <n> --reason <text> --format json` | JJK-native recovery | Recovery plan or fenced new generation; never deletion. |
 | `jjk handoff create --request @handoff.json --format json` | JJK-native | Immutable handoff revision. |
 | `jjk handoff accept|decline <handoff-id> --if-version <n> --format json` | JJK-native | Atomic transfer or typed stale result. |
-| `jjk validation run --policy <id> -- <program> <args...>` | Git-enhanced | `ValidationRun`. |
+| `jjk validation run --policy <id> -- <program> <args...>` | JJK-native mutation | `ValidationRun`. |
 | `jjk validation record --request @evidence.json --format json` | JJK-native adapter input | Validated external evidence. |
 | `jjk boundary declare --request @boundary.json --format json` | JJK-native | Boundary and target plan. |
-| `jjk integration start|finish <boundary-id> --format json` | Git-enhanced | Integration operation and candidate state. |
+| `jjk integration start|finish <boundary-id> --format json` | JJK-native mutation | Integration operation and candidate state. |
 | `jjk fleet status [--fleet <id>] --format json` | JJK-native observation | `FleetSnapshot`. |
 | `jjk recover scan --format json` | JJK-native observation | Pending operations, stale leases, missing/divergent workspaces, suggested actions. |
 | `jjk recover plan <subject-id> --action adopt|fork|park|reconcile --format json` | JJK-native | Immutable recovery plan with prerequisites. |
-| `jjk recover apply <recovery-plan-id> --if-version <n> --format json` | Git-enhanced | Committed recovery or `repair_required`. |
+| `jjk recover apply <recovery-plan-id> --if-version <n> --format json` | JJK-native mutation | Committed recovery or `repair_required`. |
 | unclaimed `jjk <git-args...>` or explicit `jjk git -- <args...>` | Transparent Git passthrough | Git's own byte streams and process status; no JSON. |
 
 `@file` is a CLI transport convenience. The API itself receives typed JSON and does not depend on files.
@@ -902,7 +902,7 @@ Retries with the same idempotency key return the committed result or current rep
 {
   "code": "LEASE_FENCED",
   "message": "workspace lease generation 7 is no longer current",
-  "subject_ids": ["wsp_...", "lea_..."],
+  "subject_ids": ["ws_...", "lea_..."],
   "retryable": false,
   "recovery_commands": [
     ["jjk", "handoff", "show", "hnd_...", "--format", "json"],

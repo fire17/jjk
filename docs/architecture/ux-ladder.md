@@ -40,7 +40,7 @@ Prototype references are evidence of learned behavior, not a commitment to its T
 | `UX-DEC-001` | Seven stable levels `0..6` derive from seven evidenced task families. New levels require a new question and schema-versioned addition; existing IDs never renumber. |
 | `UX-DEC-002` | One semantic graph and one action catalog serve CLI, TUI, and API. Renderers may differ; topology, availability, risk, selection, and mutation semantics may not. |
 | `UX-DEC-003` | `status` answers repository/workspace safety; `current` answers semantic location. They share level 0 but remain distinct fast commands. |
-| `UX-DEC-004` | Beginner verbs are exactly `init`, `save`, `nice`, `see`, `return`, `pick`. `jjk <free-form text>` is parser sugar for `save`, not a seventh action. |
+| `UX-DEC-004` | Beginner verbs are exactly `setup`, `save`, `nice`, `see`, `return`, `pick`. Descriptions use explicit `jjk save -- <text>`; unknown first tokens remain transparent Git. |
 | `UX-DEC-005` | Every view carries available actions from the shared catalog, including level 0. TUI/API dispatch the same `ActionId` as CLI. |
 | `UX-DEC-006` | Transitions carry focus by stable entity ID, never row number, screen coordinate, color, or fuzzy label. |
 | `UX-DEC-007` | Omission is explicit data. Every projection carries hidden counts/categories/reasons and expansion links. |
@@ -168,9 +168,9 @@ Every mutation follows:
 
 ### 4.1 Command classes
 
-- **JJK-native:** `status`, `current`, six beginner verbs, attempts, story, handoff, promotion policy, harvesting, transformations, Timeshift.
-- **Git-enhanced:** JJK plans semantic/evidence work around explicit Git effects, such as refreshing submission projections or promoting a verified state to a canonical ref. Plans print exact Git-facing effects.
-- **Transparent Git passthrough:** any top-level argv not claimed by the versioned JJK-native/enhanced registry, plus the explicit collision-proof form `jjk git -- <argv...>`, forwards platform-native argv, cwd/env/stdio/signals/exit code; it does not lock, rewrite flags, prompt, journal semantic success, or print JJK output. Unix should prefer `exec`. External changes reconcile on the next JJK command. Any command that parses/decorates Git is Git-enhanced, not transparent.
+- **JJK-native:** `setup`, `save`, `step`, `nice`, `see`, `return`, `pick`, `fork`, `freeze`, `current`, `story`, `back`, `forward`, `up`, `down`, `archive`, `recover`, `undo`, `redo`, `backup`, `load`, `handoff`, `validate`, `doctor`, and `completion`.
+- **Git-enhanced:** `status` only in stable v0.1; its explicit orientation forms join native Git status truth with JJK state.
+- **Transparent Git passthrough:** any top-level argv not claimed by the versioned JJK-native/enhanced registry, plus the explicit collision-proof form `jjk git -- <argv...>`, forwards platform-native argv, cwd/env/stdio/signals/exit code; it does not lock, rewrite flags, prompt, journal semantic success, or print JJK output. Unix should prefer `exec`. External changes reconcile on the next JJK command. Any future command that parses or decorates Git requires an explicit versioned Git-enhanced registry decision.
 
 ## 5. Rung specifications
 
@@ -191,7 +191,7 @@ All rungs expose “what is not shown” through CLI `jjk see --omitted`, TUI `o
 
 - **User question:** “What did I mean to preserve, where should I return, and which one idea should I carry forward?”
 - **Objects/new information:** `SemanticState`, `MemorableWaypoint`, `StateChoice`, `AtomicDelta`, `RememberedPath`; saved meaning, known-good waypoint, remembered target, and a state’s parent-to-state delta.
-- **Actions:** exactly `init`, `save`, `nice`, `see`, `return`, `pick`. Free-form `jjk <text>` is exact `save` sugar. `pick` applies only the source state’s logical-parent delta and records base/source/patch/conflict provenance.
+- **Actions:** exactly `setup`, `save`, `nice`, `see`, `return`, `pick`. State creation is explicit through `save`; unowned/free-form text is transparent Git passthrough. `pick` applies only the source state’s logical-parent delta and records base/source/patch/conflict provenance.
 - **Context carried:** level-0 facts plus state ID, label, kind, logical parent, Git OID, attempt membership, curation/trust markers, evidence status, dirty-work pseudo-node.
 - **Information dropped:** raw patches/file lists, visited-history mechanics, full worktree topology, actor assignment, policy details, ecosystem, transformation, Timeshift components.
 - **Transition:** ascent maps state to containing attempt; descent maps attempt to last-focused state or deterministic tip. `show` drills to content at level 2. Default help shows six verbs and one adjacent-level hint.
@@ -271,7 +271,7 @@ All mutations show selection expression, exact resolved IDs/count, revision/prec
 
 ### 7.1 CLI and TUI
 
-Human CLI order is fixed: altitude header; focus/revision/completeness; primary representation; omission/warning line; bounded ordered next actions. `--quiet` never removes safety/incompleteness/ambiguity. `--verbose` stays within the rung. `--format text|json|jsonl`; `--json` aliases JSON.
+Human CLI order is fixed: altitude header; focus/revision/completeness; primary representation; omission/warning line; bounded ordered next actions. `--quiet` never removes safety/incompleteness/ambiguity. `--verbose` stays within the rung. Canonical structured output is `--format json`; `--json` is its alias. JSONL is reserved for explicit event streams.
 
 The TUI consumes snapshots/events only; it never reads storage or runs Git directly. Revision change invalidates plans and refreshes with focus carry. It is keyboard complete. `jjk tui --accessible` uses durable line-oriented output with no alternate screen, cursor redraw, animation, mouse capture, hidden key-only controls, or transient-only reports. `--motion never` and `JJK_REDUCED_MOTION=1` disable animation.
 
@@ -294,7 +294,7 @@ Cursors bind fingerprint, revision, level, filters, and sort contract. Stale cur
 Success emits one `ViewSnapshot`, `ActionPlan`, or `ActionResult` on stdout. Failure emits one schema-versioned `ErrorEnvelope` on stderr, stdout empty.
 
 ```json
-{"schema":"jjk.api/v1","kind":"view","level":{"id":2,"key":"exploration","name":"Exploration"},"repo":{"id":"r_…","fingerprint":"…"},"graph_revision":"gr_…","focus":{"requested":"s_…","resolved":"a_…","via":"contained_by"},"nodes":[],"edges":[],"actions":[],"omitted":{"incomplete":false,"hidden_counts":{},"reasons":[]},"capabilities":{},"warnings":[],"next_page":null}
+{"schema":"jjk.command/v1","request_id":"req_…","operation_id":null,"projection_version":184,"outcome":"observed","result":{"kind":"view","level":{"id":2,"key":"exploration","name":"Exploration"},"repo":{"id":"r_…","fingerprint":"…"},"graph_revision":"gr_…","focus":{"requested":"s_…","resolved":"a_…","via":"contained_by"},"nodes":[],"edges":[],"actions":[],"omitted":{"incomplete":false,"hidden_counts":{},"reasons":[]},"capabilities":{},"next_page":null},"warnings":[],"error":null}
 ```
 
 JSON has no ANSI, hyperlinks, truncation, localized keys, or TTY fields; uses full IDs/RFC3339 UTC; canonical array order and schema-order serialization; distinguishes unavailable/redacted/absent/null; escapes controls. JSONL is only for explicit event streams. Human progress uses stderr and is suppressed in JSON mode unless requested as JSONL.

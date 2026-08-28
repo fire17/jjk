@@ -16,7 +16,10 @@ pub struct RawInvocation {
 impl RawInvocation {
     /// Capture the current process invocation without Unicode conversion.
     pub fn current() -> io::Result<Self> {
-        Ok(Self { argv: std::env::args_os().skip(1).collect(), cwd: std::env::current_dir()? })
+        Ok(Self {
+            argv: std::env::args_os().skip(1).collect(),
+            cwd: std::env::current_dir()?,
+        })
     }
 
     /// Construct an invocation for embedding or tests.

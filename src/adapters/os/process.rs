@@ -15,11 +15,17 @@ fn termination(status: std::process::ExitStatus) -> ProcessTermination {
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
-        ProcessTermination { code: status.code(), signal: status.signal() }
+        ProcessTermination {
+            code: status.code(),
+            signal: status.signal(),
+        }
     }
     #[cfg(not(unix))]
     {
-        ProcessTermination { code: status.code(), signal: None }
+        ProcessTermination {
+            code: status.code(),
+            signal: None,
+        }
     }
 }
 
@@ -34,7 +40,11 @@ impl ProcessRunner for OsProcess {
                 command.env_remove(name);
             }
         }
-        let output = command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).output()?;
+        let output = command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()?;
         Ok(ProcessOutput {
             termination: termination(output.status),
             stdout: output.stdout,

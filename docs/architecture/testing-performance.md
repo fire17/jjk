@@ -253,7 +253,7 @@ FP-14 after-commit-marker-before-unlock
 
 Each failpoint supports `error`, `SIGKILL`, short write, `ENOSPC`, `EACCES`, fsync failure, child Git/JJ nonzero exit, and corrupt/truncated last journal frame where meaningful. The child is killed from a supervisor process so destructors cannot fake crash safety. On restart, `jjk repair --check` followed by normal discovery must converge to exactly one of two declared outcomes: the pre-operation snapshot or the fully verified post-operation snapshot. Mixed outcomes, duplicated events, lost sibling refs, unexplained commits, or an unrecoverable lock are failures.
 
-For every JJK-native mutator (`init`, capture, return, fork, atomic pick, promotion, delete/recover, undo/redo, backup/load, migration), run:
+For every JJK-native mutator (`setup`, capture, return, fork, atomic pick, promotion, archive/recover, undo/redo, backup/load, migration), run:
 
 ```bash
 cargo test --test crash_matrix -- <operation> --all-failpoints --modes error,kill,short-write,enospc
@@ -336,8 +336,8 @@ Every released schema version has an immutable fixture containing metadata, refs
 For each `vN → vN+1`:
 
 1. copy the fixture; capture Git refs, HEAD, index, worktree digest, and metadata checksum;
-2. `jjk migrate --check --format json` must report a plan and make zero writes;
-3. `jjk migrate --apply` must create a verified pre-migration backup and commit the new schema atomically;
+2. `jjk setup --migration=check --json` must report a plan and make zero writes;
+3. `jjk setup --migration=apply --json` must create a verified rollback capsule and commit the new schema atomically;
 4. open/query every state, replay journal, run `git fsck --full`, and compare the semantic snapshot;
 5. rerun apply: it is an idempotent no-op;
 6. run the documented rollback/export path and prove an older supported binary can read the result when backward export is promised;
@@ -375,8 +375,8 @@ The corpus is generated from deterministic manifests; checked-in assets contain 
 
 | Operation | Fixture | Hard threshold |
 |---|---|---|
-| `jjk current --json` warm | ordinary | p95 ≤ 50 ms, p99 ≤ 75 ms, RSS ≤ 35 MiB |
-| `jjk status --json` warm, clean | ordinary | p95 ≤ 50 ms, p99 ≤ 75 ms, RSS ≤ 40 MiB |
+| `jjk current --format json` warm | ordinary | p95 ≤ 50 ms, p99 ≤ 75 ms, RSS ≤ 35 MiB |
+| `jjk status --format json` warm, clean | ordinary | p95 ≤ 50 ms, p99 ≤ 75 ms, RSS ≤ 40 MiB |
 | `current` / `status` warm | monorepo | p95 ≤ 75 ms; zero full worktree walk, proven by trace counters |
 | return/fork plan to first feedback | ordinary | p95 ≤ 100 ms |
 | capture, 1 changed 4 KiB file | ordinary | p95 ≤ 150 ms end-to-end |

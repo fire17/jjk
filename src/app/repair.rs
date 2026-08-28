@@ -1,13 +1,8 @@
-use crate::ports::operation::{OperationRecord, OperationStatus, OperationStore};
+use crate::ports::operation::{
+    OperationRecord, OperationStatus, OperationStore, RecoveryDisposition,
+};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum RepairDisposition {
-    AbortUnapplied,
-    InspectAndResume,
-    ResumeVerification,
-    AwaitExplicitResolution,
-    RestoreThenAbort,
-}
+pub(crate) type RepairDisposition = RecoveryDisposition;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PendingRepair {
@@ -16,21 +11,24 @@ pub(crate) struct PendingRepair {
 }
 
 pub(crate) fn discover<S: OperationStore>(store: &S) -> Result<Vec<PendingRepair>, S::Error> {
-    store.pending_operations().map(|operations| operations.into_iter().map(|operation| {
-        let disposition = classify(operation.status);
-        PendingRepair { operation, disposition }
-    }).collect())
+    store.recovery_candidates().map(|operations| {
+        operations
+            .into_iter()
+            .map(|candidate| PendingRepair {
+                operation: candidate.operation,
+                disposition: candidate.disposition,
+            })
+            .collect()
+    })
 }
 
 pub(crate) const fn classify(status: OperationStatus) -> RepairDisposition {
-    match status {
-        OperationStatus::Prepared => RepairDisposition::AbortUnapplied,
-        OperationStatus::Applying => RepairDisposition::InspectAndResume,
-        OperationStatus::AwaitingResolution | OperationStatus::RepairRequired => RepairDisposition::AwaitExplicitResolution,
-        OperationStatus::Verifying => RepairDisposition::ResumeVerification,
-        OperationStatus::Aborting => RepairDisposition::RestoreThenAbort,
-        OperationStatus::Committed | OperationStatus::Aborted => unreachable_terminal(),
+    match status.recovery_disposition() {
+        Some(disposition) => disposition,
+        None => unreachable_terminal(),
     }
 }
 
-const fn unreachable_terminal() -> ! { panic!("terminal operations are not pending") }
+const fn unreachable_terminal() -> ! {
+    panic!("terminal operations are not pending")
+}

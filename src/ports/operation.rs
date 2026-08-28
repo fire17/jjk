@@ -44,21 +44,52 @@ impl OperationStatus {
         matches!(self, Self::Committed | Self::Aborted)
     }
 
-    pub(crate) const fn is_pending(self) -> bool {
-        !self.is_terminal()
+    pub(crate) const fn recovery_disposition(self) -> Option<RecoveryDisposition> {
+        match self {
+            Self::Prepared => Some(RecoveryDisposition::AbortUnapplied),
+            Self::Applying => Some(RecoveryDisposition::InspectAndResume),
+            Self::AwaitingResolution | Self::RepairRequired => {
+                Some(RecoveryDisposition::AwaitExplicitResolution)
+            }
+            Self::Verifying => Some(RecoveryDisposition::ResumeVerification),
+            Self::Aborting => Some(RecoveryDisposition::RestoreThenAbort),
+            Self::Committed | Self::Aborted => None,
+        }
     }
 
     pub(crate) const fn can_transition_to(self, next: Self) -> bool {
         matches!(
             (self, next),
-            (Self::Prepared, Self::Applying | Self::Aborting | Self::RepairRequired)
-                | (Self::Applying, Self::AwaitingResolution | Self::Verifying | Self::Aborting | Self::RepairRequired)
-                | (Self::AwaitingResolution, Self::Applying | Self::Aborting | Self::RepairRequired)
-                | (Self::Verifying, Self::Committed | Self::RepairRequired)
+            (
+                Self::Prepared,
+                Self::Applying | Self::Aborting | Self::RepairRequired
+            ) | (
+                Self::Applying,
+                Self::Applying
+                    | Self::AwaitingResolution
+                    | Self::Verifying
+                    | Self::Aborting
+                    | Self::RepairRequired
+            ) | (
+                Self::AwaitingResolution,
+                Self::Applying | Self::Aborting | Self::RepairRequired
+            ) | (Self::Verifying, Self::Committed | Self::RepairRequired)
                 | (Self::Aborting, Self::Aborted | Self::RepairRequired)
-                | (Self::RepairRequired, Self::Applying | Self::Verifying | Self::Aborting)
+                | (
+                    Self::RepairRequired,
+                    Self::Applying | Self::Verifying | Self::Aborting
+                )
         )
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RecoveryDisposition {
+    AbortUnapplied,
+    InspectAndResume,
+    ResumeVerification,
+    AwaitExplicitResolution,
+    RestoreThenAbort,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -85,10 +116,64 @@ pub(crate) struct OperationRecord {
     pub result: Option<Vec<u8>>,
     pub last_event_seq: u64,
 }
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RecoveryCandidate {
+    pub operation: OperationRecord,
+    pub disposition: RecoveryDisposition,
+}
 
 pub(crate) trait OperationStore {
     type Error;
 
     fn operation(&self, operation_id: Uuid) -> Result<Option<OperationRecord>, Self::Error>;
     fn pending_operations(&self) -> Result<Vec<OperationRecord>, Self::Error>;
+
+    fn recovery_candidates(&self) -> Result<Vec<RecoveryCandidate>, Self::Error> {
+        self.pending_operations().map(|operations| {
+            operations
+                .into_iter()
+                .filter_map(|operation| {
+                    operation
+                        .status
+                        .recovery_disposition()
+                        .map(|disposition| RecoveryCandidate {
+                            operation,
+                            disposition,
+                        })
+                })
+                .collect()
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transition_table_rejects_terminal_and_skipped_states() {
+        assert!(OperationStatus::Prepared.can_transition_to(OperationStatus::Applying));
+        assert!(OperationStatus::Applying.can_transition_to(OperationStatus::Applying));
+        assert!(OperationStatus::Applying.can_transition_to(OperationStatus::Verifying));
+        assert!(OperationStatus::Verifying.can_transition_to(OperationStatus::Committed));
+        assert!(!OperationStatus::Prepared.can_transition_to(OperationStatus::Committed));
+        assert!(!OperationStatus::Committed.can_transition_to(OperationStatus::Applying));
+        assert!(!OperationStatus::Aborted.can_transition_to(OperationStatus::RepairRequired));
+    }
+
+    #[test]
+    fn every_nonterminal_status_has_a_recovery_disposition() {
+        for status in [
+            OperationStatus::Prepared,
+            OperationStatus::Applying,
+            OperationStatus::AwaitingResolution,
+            OperationStatus::Verifying,
+            OperationStatus::Aborting,
+            OperationStatus::RepairRequired,
+        ] {
+            assert!(status.recovery_disposition().is_some(), "{status:?}");
+        }
+        assert_eq!(OperationStatus::Committed.recovery_disposition(), None);
+        assert_eq!(OperationStatus::Aborted.recovery_disposition(), None);
+    }
 }

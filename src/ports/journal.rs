@@ -76,6 +76,34 @@ pub(crate) struct StoredEvent {
     pub record: EventRecord,
 }
 
+impl EventRecord {
+    pub(crate) fn validate_for_append(
+        &self,
+        expected_repo_id: Uuid,
+        expected_envelope_version: u16,
+    ) -> Result<(), &'static str> {
+        if self.repo_id != expected_repo_id {
+            return Err("event belongs to a different repository");
+        }
+        if self.event_schema_version == 0 {
+            return Err("event schema version must be positive");
+        }
+        if self.envelope_version != expected_envelope_version {
+            return Err("event envelope version is unsupported");
+        }
+        if self.event_type.is_empty() {
+            return Err("event type must not be empty");
+        }
+        if self.recorded_at_utc.is_empty() {
+            return Err("recorded timestamp must not be empty");
+        }
+        if self.event_hash == GENESIS_HASH {
+            return Err("event hash must not be the genesis hash");
+        }
+        Ok(())
+    }
+}
+
 pub(crate) trait Journal {
     type Error;
 

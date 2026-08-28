@@ -13,4 +13,8 @@ pub trait Filesystem {
 
     /// Whether path metadata exists without following the final symlink.
     fn symlink_metadata_exists(&self, path: &Path) -> io::Result<bool>;
+
+    /// Resolve `candidate` and prove it remains beneath canonical `root`.
+    /// Implementations must reject symlink escapes and the root itself.
+    fn canonicalize_beneath(&self, root: &Path, candidate: &Path) -> io::Result<PathBuf>;
 }

@@ -10,9 +10,9 @@ JJK turns a Git working directory into a safe space for stateful, reversible hum
 
 | Class | Rule | Examples |
 |---|---|---|
-| JJK-native | Deliberately non-Git vocabulary; implements semantic state/attempt behavior | `save`, `step`, `nice`, `see`, `return`, `pick`, `fork`, `story`, `freeze`, `timeshift` |
-| Git-enhanced | Uses a Git name only when JJK deliberately adds state-aware value; native Git behavior remains inspectable | `status` in stable v0.1 |
-| Git passthrough | Every unenhanced Git command is executed by the real Git binary with original argv bytes, cwd, environment, stdio/TTY, signals, and exit status | `clone`, `rebase`, `merge`, `fetch`, `remote`, `config`, unknown future Git verbs |
+| JJK-native | Deliberately non-Git vocabulary; implements semantic state, topology, recovery, collaboration, and operation behavior | `setup`, `save`, `step`, `nice`, `see`, `return`, `pick`, `fork`, `freeze`, `current`, `story`, `back`, `forward`, `up`, `down`, `archive`, `recover`, `undo`, `redo`, `backup`, `load`, `handoff`, `validate`, `doctor`, `completion` |
+| Git-enhanced | Uses a Git name only when JJK deliberately adds state-aware value; the exact flag grammar is owned by the versioned routing registry | `status` in stable v0.1 |
+| Git passthrough | Every unenhanced Git command is executed by the real Git binary with original argv bytes, cwd, environment, stdio/TTY, signals, and exit status | `init`, `clone`, `rebase`, `merge`, `fetch`, `remote`, `config`, unknown future Git verbs |
 
 Routing invariant: an argv sequence not claimed by the versioned JJK-native/enhanced registry is passthrough, not an error and not guessed behavior.
 
@@ -20,7 +20,7 @@ Routing invariant: an argv sequence not claimed by the versioned JJK-native/enha
 
 | ID | Observable contract | Required proof |
 |---|---|---|
-| VAL-CORE-001 | `jjk init` on an existing Git repository imports reachable commits and refs idempotently without changing HEAD, index, tracked bytes, untracked bytes, ignored bytes, or user Git config. | Before/after repository fingerprint fixture; second init produces no new semantic facts. |
+| VAL-CORE-001 | `jjk setup` on an existing Git repository imports reachable commits and refs idempotently without changing HEAD, index, tracked bytes, untracked bytes, ignored bytes, or user Git config. | Before/after repository fingerprint fixture; second setup produces no new semantic facts. |
 | VAL-CORE-002 | A state capture creates one stable JJK state identity backed by a reachable Git object, with label, description, kind, actor, logical parent, attempt, workspace, stats, provenance, and operation identity. | CLI JSON contract plus database/event replay equality. |
 | VAL-CORE-003 | Returning to a historical state restores its exact tree and preserves every descendant future. The next capture creates a sibling attempt only when divergence actually occurs. | Green→purple; return green→orange fixture; both tips remain reachable and visible. |
 | VAL-CORE-004 | `pick` applies exactly the source logical-parent→source-state delta, never the source's accumulated ancestry. | Purple+fast to orange yields orange+fast, never purple+fast; patch identity and source/base provenance recorded. |
@@ -39,7 +39,7 @@ Routing invariant: an argv sequence not claimed by the versioned JJK-native/enha
 | VAL-AGENT-002 | Agent handoff is typed: owner, objective, base state, produced state, validation evidence, remaining risks, and exact resume command. | JSON schema fixture and resume smoke flow. |
 | VAL-MIG-001 | Current `.jjk/repo.json` version 1, histories, refs, backups, freezes, navigation, lanes, and timeshifts import once, preserve provenance, and can roll back to the prior installation. | Golden migration corpus from current JJK plus byte/checksum manifest. |
 | VAL-BACKUP-001 | Backup/load and freeze are distinct, checksummed, previewable, and restore exact declared scope. Load always creates a pre-load recovery point. | Disaster drill after metadata loss, ref loss, and interrupted load. |
-| VAL-UX-001 | A new user can complete init→capture→see→return and explain the six-verb loop within five minutes. | Fresh-user protocol, n≥3, 3/3 completion without intervention. |
+| VAL-UX-001 | A new user can complete setup→capture→see→return and explain the six-verb loop within five minutes. | Fresh-user protocol, n≥3, 3/3 completion without intervention. |
 | VAL-UX-002 | Terminal output remains legible at 40/80/120 columns, with `NO_COLOR`, common color-vision deficiencies, non-TTY pipes, and machine JSON. Current state is not encoded by color alone. | Snapshot and accessibility checks. |
 | VAL-PERF-001 | Warm `current` and `status` p95 <50 ms on the representative ordinary repository fixture. | Hyperfine-equivalent benchmark, ≥50 warm samples, raw results retained. |
 | VAL-PERF-002 | Return/fork planning emits feedback p95 <100 ms; graph first paint p95 <100 ms at 1,000 states. | Release-binary benchmark on stated hardware and fixtures. |
@@ -74,6 +74,6 @@ Routing invariant: an argv sequence not claimed by the versioned JJK-native/enha
 
 ## Stable v0.1 scope
 
-Stable v0.1 must fully implement and prove: init/reconcile, capture (`save`/free-form/`step`/`nice`), graph (`see`/current/status/show/diff/story), exact return/navigation, fork/worktree, exact atomic pick, archive/recover, whole-control undo/redo, backup/load/freeze, typed validation/handoff, enhanced status, transparent Git passthrough, migration from current v1 metadata, Git-only operation, and explicit optional-JJ capability reporting.
+Stable v0.1 must fully implement and prove: setup/reconcile, capture (`save`/`step`/`nice`), graph (`see`/`current`/`status`/`story`), exact return/navigation, fork/worktree, exact atomic pick, archive/recover, whole-control undo/redo, backup/load/freeze, typed validation/handoff, enhanced status, transparent Git passthrough, migration from current v1 metadata, Git-only operation, and explicit optional-JJ capability reporting.
 
 PR Radar, Feature Harvest, semantic multi-candidate composition, functional-history projections, full terminal/editor/conversation Timeshift, remote metadata service, and GUI are research/experimental unless their own contracts are implemented and proven. No placeholder command appears in stable help.

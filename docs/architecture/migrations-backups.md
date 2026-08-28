@@ -17,7 +17,7 @@ The rewrite uses a SQLite WAL event journal plus materialized projections. SQLit
 | LMDB/RocksDB | Strong embedded storage | Poorer portable inspection and migration tooling; extra native dependency; transactions do not model relational integrity as directly |
 | SQLite WAL | Atomic transactions, constraints, online backup API, mature integrity checks, one Rust-process dependency | WAL/network-filesystem caveats and single-writer serialization |
 
-**Decision MB-001:** SQLite WAL is canonical for local journal and projections. JJK must detect filesystems on which WAL locking is unsafe and either use SQLite rollback-journal mode under the same repository lock or refuse mutation with a diagnostic. It must never silently copy a live `.db`, `-wal`, and `-shm` trio as a backup.
+**Decision MB-001:** SQLite WAL is canonical only after the actual control directory passes locking/shared-memory/durability probes. Otherwise JJK v0.1 refuses semantic mutation with `JJK-E-STORAGE-UNSAFE`; it never silently enables an unproven rollback-journal mode and never copies a live `.db`, `-wal`, and `-shm` trio as a backup.
 
 **Decision MB-002:** Git remains the durable object substrate. A metadata backup without its required Git objects is incomplete; a Git bundle without the meaning layer is not a JJK backup.
 
@@ -31,7 +31,7 @@ No recovery command receives a privileged shortcut around that protocol.
 
 | Operation | Class | Meaning |
 |---|---|---|
-| `jjk migrate` | JJK-native | Import or advance the local metadata schema without changing project content |
+| `jjk setup --migration=check|apply|rollback` | JJK-native | Preview, import, or recover preserved legacy metadata without claiming a colliding Git verb |
 | `jjk backup create/list/verify` | JJK-native | Capture and validate the complete local JJK control plane |
 | `jjk backup load --preview/--into` | JJK-native | Plan or restore a backup, defaulting to a new target |
 | `jjk freeze create/inspect/import` | JJK-native | Create or consume a portable selected-state/attempt bundle |
@@ -51,15 +51,17 @@ The canonical repository-wide control root is `<git-common-dir>/jjk/`, shared by
 ├── state.sqlite3               # journal + projections; canonical metadata
 ├── state.sqlite3-wal           # transient; never copied directly
 ├── state.sqlite3-shm           # transient; never copied directly
-├── lock                        # repository operation lock; transient, excluded from artifacts
+├── locks/
+│   ├── lifecycle.lock
+│   ├── repository.lock
+│   └── workspaces/<workspace-id>.lock
 ├── recovery/                   # durable operation plans, compensation data, staged restores
-├── migrations/
-│   ├── legacy-v1/              # immutable source copies and import receipt
-│   └── receipts/               # one receipt per applied schema step
-├── backups/                    # default local destination
-├── freezes/                    # default local destination
-├── sync/                       # fetched packs, cursors, quarantine
-└── quarantine/                 # corrupt/untrusted imports and removal staging
+├── workspaces/                 # JJK-owned operation workspaces
+├── migrations/{legacy-v1,receipts}/
+├── backups/
+├── freezes/
+├── sync/quarantine/
+└── quarantine/
 ```
 
 `state.sqlite3` contains `PRAGMA user_version`, but schema identity is not represented by that integer alone.
@@ -473,7 +475,7 @@ Sync protocol:
 
 1. discover remote capabilities and fetch stream refs without changing worktree;
 2. lock metadata writer and reconcile local Git facts;
-3. download packs to `.jjk/sync/quarantine`;
+3. download packs to `<git-common-dir>/jjk/sync/quarantine`;
 4. verify pack checksums/signatures, repository identity, schema compatibility, event IDs, causal parents, and privacy classes;
 5. resolve semantic conflicts into explicit facts (for example, two labels or two candidate tips), never last-write-wins over history;
 6. durable-prepare import plan and cursor updates;
@@ -563,7 +565,7 @@ A backup, freeze, migration, or sync pack passes only when all applicable checks
 
 Release procedure:
 
-1. run `jjk migrate --check --target <N>` and verify the N−1 compatibility matrix;
+1. run `jjk setup --migration=check --json` and verify the predecessor compatibility matrix;
 2. create and restore-drill a full pre-upgrade backup;
 3. apply expand/data migration under durable operation;
 4. run N against the real surface and record migration receipt;
@@ -594,7 +596,7 @@ Every release fixture contains golden stores from all supported predecessors. CI
 | Restore partially materializes worktree | post-restore verifier | Keep staging and pre-restore backup; compensate from durable file inventory |
 | Corrupt current DB | SQLite/journal verification | Stop mutations, open read-only, restore into new target from last verified backup |
 | Removal would orphan objects | ordinary-ref reachability check | Require archive refs/freeze or explicit loss authorization |
-| Network filesystem violates locking | startup filesystem/lock probe | rollback-journal under repo lock or refuse mutation; no silent WAL use |
+| Network filesystem violates locking | startup filesystem/lock probe | refuse semantic mutation with `JJK-E-STORAGE-UNSAFE`; transparent Git and proven read-only inspection remain available |
 
 ## 17. Exact disaster drills
 
@@ -619,7 +621,7 @@ For each failpoint after lock, source copy, operation prepare, each import batch
 
 1. clone the same legacy v1 fixture;
 2. inject process termination at that failpoint;
-3. rerun `jjk migrate`;
+3. rerun `jjk setup --migration=apply`;
 4. require either one committed receipt or one actionable `repair_required`, never two imports;
 5. compare all entity/edge counts and legacy ID mappings with an uninterrupted golden migration;
 6. hash original `repo.json`, `history.json`, backup, freeze, and refs before/after.
