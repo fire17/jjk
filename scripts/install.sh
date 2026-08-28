@@ -4,6 +4,22 @@ set -eu
 repository=${JJK_REPOSITORY:-fire17/jjk}
 install_dir=${JJK_INSTALL_DIR:-"$HOME/.local/bin"}
 version=${JJK_VERSION:-}
+case "${1:-}" in
+    -h|--help)
+        cat <<'EOF'
+Usage: install.sh
+
+Environment:
+  JJK_VERSION      release tag, for example v0.1.0; defaults to latest
+  JJK_INSTALL_DIR  installation directory; defaults to $HOME/.local/bin
+  JJK_REPOSITORY   GitHub owner/repository; defaults to fire17/jjk
+EOF
+        exit 0
+        ;;
+    '') ;;
+    *) printf 'jjk installer: unexpected argument: %s\n' "$1" >&2; exit 2 ;;
+esac
+
 
 need() {
     command -v "$1" >/dev/null 2>&1 || {
