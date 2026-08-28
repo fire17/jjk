@@ -151,7 +151,7 @@ Each historical bug gets a stable fixture and failure ID. A fix may add a smalle
 | `HF-MAIN-003` | JJK-native saves on attempts never advance `main` unless an explicit promotion/update targets it |
 | `HF-MESSAGE-004` | every JJK-created interoperable Git commit has a non-empty meaningful subject/body; internal snapshots do not pollute ordinary Git history by default |
 | `HF-LEAF-005` | leaf markers derive from branch/attempt tips; a historical state on a continuing attempt is not marked a leaf, while a canonical tip remains one even if other descendants exist |
-| `HF-RETURN-006` | returning to an attempt tip attaches to its branch; returning to historical state restores exact tree/index and preserves the old tip without fake staged changes |
+| `HF-RETURN-006` | returning to an attempt tip attaches to its branch; returning to a historical state restores its aggregate tree into HEAD, index, and worktree with a clean index while preserving the old tip. Exact historical staged/unstaged partition is restored only when a state carries an explicit Timeshift workspace capsule; ordinary states never claim it |
 | `HF-DIVERGE-007` | navigation alone creates no branch; the first state-making action after historical return creates a sibling at the returned state, not at the previous tip |
 | `HF-PICK-008` | pick makes the new `cherry` current and records base, source, source parent, patch identity, and conflict resolution |
 | `HF-UPDATE-009` | moving a branch/state mapping updates Git and JJK consistently without duplicate state IDs for one semantic fact |
@@ -289,7 +289,7 @@ This must pass 10 consecutive runs on the release host. Any intermittent failure
 Transparent Git passthrough means JJK delegates to the configured Git binary without interpreting or rewriting Git arguments. The harness executes a case twice from cloned-identical sandboxes: once as `git <args>` and once through the transparent JJK route. It compares:
 
 - exact `OsString` argument bytes and order received by a recording Git shim, including empty args, non-UTF-8 bytes on Unix, spaces, glob characters, leading dashes, `--`, and `-c key=value`;
-- exact cwd inode/path semantics and inherited environment, except one documented recursion-prevention variable removed before `exec`;
+- exact cwd inode/path semantics and inherited environment with no permitted delta; JJK's recursion guard is internal process state and MUST NOT be exported to the Git child;
 - stdin bytes, stdout bytes, stderr bytes, TTY/PTY behavior, interactive prompts, pager/editor/credential-helper invocation, and file-descriptor closure;
 - termination by exit code or signal, including `SIGINT`, `SIGTERM`, `SIGPIPE`, and child stop/continue behavior;
 - resulting files, refs, index stages, reflog, and config.
@@ -302,7 +302,7 @@ struct PassthroughOracle {
 }
 ```
 
-The required command corpus includes `status`, `diff`, `log`, `show`, `commit`, `commit --amend`, `switch`, `checkout`, `branch`, `merge`, `rebase`, `cherry-pick`, `reset`, `restore`, `stash`, `worktree`, `submodule`, `fetch`, `pull`, `push`, `config`, `credential`, aliases, external `git-*` commands, hooks, pager, editor, and an unknown subcommand. For pure transparent passthrough, output must be byte-identical and exit/termination identical. Post-command JJK reconciliation may occur only after Git exits, must not alter the captured streams/exit, and is separately evidenced.
+The required command corpus includes `status`, `diff`, `log`, `show`, `commit`, `commit --amend`, `switch`, `checkout`, `branch`, `merge`, `rebase`, `cherry-pick`, `reset`, `restore`, `stash`, `worktree`, `submodule`, `fetch`, `pull`, `push`, `config`, `credential`, aliases, external `git-*` commands, hooks, pager, editor, and an unknown subcommand. For pure transparent passthrough, output and termination must be byte-identical. Passthrough performs no reconciliation in that process; the next JJK-native/enhanced invocation separately proves idempotent reconciliation.
 
 Exact gate:
 

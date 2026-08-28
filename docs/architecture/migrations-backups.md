@@ -296,7 +296,7 @@ Every `FreezeRecord` field in `repo.json` is retained: `id`, `stateId`, `created
 6. **Durable prepare:** create `<git-common-dir>/jjk/migrations/legacy-v1/<operation-id>/`, copy source bytes, fsync files and directory, create pre-migration full backup, commit operation status `prepared` in the staged database, and append `MigrationStarted` in the operation event sequence.
 7. **Build:** populate a new database at a recovery-staging path in one transaction; do not mutate Git or source files.
 8. **Verify:** run all checks in section 14, replay projections, compare row/edge/ref counts, and write a signed-by-checksum receipt.
-9. **Activate:** atomically rename the staged DB to `<git-common-dir>/jjk/state.sqlite3` and atomically write a small format marker. No legacy file is renamed or deleted.
+9. **Activate:** embed schema identity, migration receipt, and an activation nonce inside the staged DB; fsync it; then atomically rename that single self-identifying DB to `<git-common-dir>/jjk/state.sqlite3`. Any human-readable format marker is regenerated from the active DB and is never an activation authority. No legacy file is renamed or deleted.
 10. **Commit:** append `MigrationCompleted` (or `MigrationFailed` before abort/repair), mark the operation `committed`, fsync, unlock, and render the recovery command.
 
 Crash behavior is determined only by durable operation status: `prepared` discards/reuses staging; `applying|verifying` resumes verification; `repair_required` forbids ordinary mutation; `committed` makes retry a no-op. Re-running migration over unchanged input returns the original receipt. Changed legacy input after cutover is reported as drift and is never merged implicitly.
@@ -342,7 +342,7 @@ backup.jjkbak/
 └── legacy/                     # optional preserved migration capsule
 ```
 
-The SQLite file is produced with SQLite’s online backup API from one committed read snapshot. A repository lock is still required while capturing cross-layer ref/workspace state; the implementation may shorten the exclusive interval by staging immutable Git objects first, but verification must prove one boundary. `-wal` and `-shm` are absent from the artifact.
+The SQLite file is produced with SQLite’s online backup API from one committed read snapshot. JJK's repository lock excludes JJK writers but cannot exclude native Git/JJ/IDE writers. Backup therefore records two independently observed cross-layer fingerprints around capture. If they differ, or any per-workspace pre/post fingerprint differs, the attempt is rejected and retried from a new plan; no artifact claims a single boundary. The implementation may stage immutable Git objects before the locked interval, but final verification must bind one stable observed boundary. `-wal` and `-shm` are absent from the artifact.
 
 `git/objects.bundle` includes all OIDs reachable from captured ordinary refs, `refs/jjk/*`, operation recovery anchors, and states in the database. `git/refs.json` records symbolic HEAD, peeled refs, object format, remotes without credentials, and per-worktree HEAD/branch. Index and dirty files are separate because neither Git bundle nor metadata DB contains them.
 
@@ -391,7 +391,7 @@ struct ArtifactDigest {
 3. Resolve privacy policy and destination; default destination permissions are owner-only.
 4. Plan artifact list and estimated space; require free space ≥ `estimated_bytes * 1.2 + 64 MiB`.
 5. Commit `BackupCreate` operation as `prepared`.
-6. Capture SQLite through online backup API; capture refs, operation recovery artifacts, index, patches, and untracked content.
+6. While holding the JJK lock, capture a pre-fingerprint, SQLite through the online backup API, refs, operation recovery artifacts, indexes, patches, and untracked content, then capture a post-fingerprint; reject the attempt if any covered fact drifted.
 7. Build Git bundle from an explicit temporary ref namespace; delete temporary refs only after the bundle verifies.
 8. Hash every artifact, write canonical manifest last, fsync all files and parent directory.
 9. Verify from the artifact, not the source: checksums, SQLite checks, projection replay sample/full policy, Git bundle, OID closure, safe paths, and clean extraction.
@@ -432,9 +432,9 @@ Restore event vocabulary is fixed: the durable plan appends `RestorePrepared`; s
 
 ### 9.3 Restore current safe space
 
-`--current` requires an explicit operator choice. JJK first creates and fully verifies an automatic backup named `pre-restore-<operation-id>`. Dirty work is included; it is never silently stashed or discarded. Restore then uses temporary refs and staged files. Only after verification does JJK atomically switch the metadata DB and refs/workspaces. Ref updates use compare-and-swap against the values captured in the plan; concurrent drift aborts into `repair_required` without deleting either state.
+`--current` requires an explicit operator choice. JJK first creates and fully verifies an automatic backup named `pre-restore-<operation-id>`. Dirty work is included; it is never silently stashed or discarded. Restore then follows the ordinary durable effect protocol: stage every replacement, record per-resource preconditions and postconditions, apply refs/index/worktree/database effects in a declared order, observe after each effect, and finish in `committed` or `repair_required`. Ref updates use compare-and-swap against the values captured in the plan. JJK MUST NOT describe this heterogeneous transition as atomic.
 
-A failed restore leaves the source untouched, the destination staging/quarantine intact, the pre-restore backup verified, and one printed repair command. `undo` of a committed restore is implemented as load of the named pre-restore backup through the same protocol, not by reversing ad hoc SQL.
+A failure before the first external effect leaves the source untouched. A failure after any effect may leave a partially applied but fully journaled state; JJK preserves source, staged data, the verified pre-restore backup, and all observed external changes, then prints one exact resume or restore-from-backup command. It never promises rollback when a resource no longer matches the recorded postcondition. `undo` of a committed restore is implemented as load of the named pre-restore backup through the same protocol, not by reversing ad hoc SQL.
 
 ## 10. Freeze bundles
 
@@ -524,7 +524,7 @@ Unknown fields default to `local-sensitive`. Classification is attached to typed
 
 Backups default to mode `0600` files/`0700` directories. Encryption uses an age-compatible recipient envelope when requested; JJK never invents key storage. A secret override requires `--include-secrets --encrypt-to <recipient>` and the manifest lists inclusion without revealing values. Temporary plaintext is created only in a private staging directory and removed after atomic completion; crash recovery reports its exact path.
 
-Untrusted backup/freeze metadata is inert data: no shell expansion, environment injection, hook installation, command execution, or checkout filter execution during verification. Archive extraction is size/count bounded to prevent decompression bombs. Manifest paths are normalized UTF-8 relative paths and unique after platform case-folding.
+Untrusted backup/freeze metadata is inert data: no shell expansion, environment injection, hook installation, command execution, or checkout filter execution during verification. Archive extraction is size/count bounded to prevent decompression bombs. Manifest artifact paths use a tagged lossless native-path encoding: UTF-8 relative text when round-trippable, otherwise platform-tagged bytes on Unix or UTF-16 code units on Windows. Decoded paths must be relative, component-safe, root-contained, and unique after the target platform's normalization/case-folding before any extraction.
 
 ## 14. Integrity checks
 
@@ -579,7 +579,7 @@ Every release fixture contains golden stores from all supported predecessors. CI
 |---|---|---|
 | Crash copying legacy files | missing durable-prepare inventory/checksum | Resume copy to staging; source untouched |
 | Crash building staged DB | operation `prepared|applying` | Delete/rebuild or resume bounded step; never activate partial DB |
-| Crash after DB rename before commit marker | activation nonce/receipt disagreement | Verify staged/current DB and finish commit or restore pre-migration pointer |
+| Crash during/after DB activation rename | active DB embedded activation nonce/receipt disagrees with durable migration evidence | Treat the single renamed DB as the only selector; verify it, finish the receipt, or restore the prior DB from the prepared recovery copy; regenerate any display marker |
 | Legacy ID collision | same source/entity/key, different digest | `awaiting_resolution`; show both records; never merge automatically |
 | `commit` vs `metadata.gitCommit` mismatch | import verifier | Block state import and cutover |
 | Missing legacy state ref but object exists | ref/OID reconciliation | Recreate only in staged plan after explicit proof |

@@ -318,7 +318,7 @@ Facts report what was observed, including no-op and partial/failure outcomes. An
 | Compare-and-swap one/many refs | **Required** (`update-ref`, stdin transaction when supported) | No | Export only after a JJ-originated effect | No direct ref-file writes. Multi-ref visibility caveat remains. |
 | Switch/restore tracked worktree and index | **Required** | No | Only for an explicitly JJ-backed operation | Requires durable preservation boundary first. |
 | Create/list/remove/prune Git worktrees | **Required** | No | No by default | Git worktrees are the interoperability mechanism. |
-| Atomic pick / patch apply | **Required** for canonical v0.1 result | Read summaries only | Optional future accelerator after parity | Result commit's sole parent is target base. |
+| Atomic pick / patch apply | **Required** for canonical v0.1 result | Read summaries only | Optional future accelerator after parity | Diff the source logical-parent tree to source-state tree as a full Git tree delta (adds/deletes/renames/modes/symlinks/gitlinks/binary); apply to an isolated temporary index seeded from the target-base tree using Git's three-way machinery, materialize conflicts only through the durable resolution protocol, write a result tree/commit whose sole parent is target base, and verify the recomputed source delta/patch identity plus provenance. |
 | Merge/rebase/canonical promotion | **Required** for stable v0.1 path | Read summaries only | Optional explicitly selected path | Plan states which engine; never silently switches engines mid-operation. |
 | JJ change IDs and operation-log inspection | No | No | **Required if capability requested** | Read without working-copy snapshot. |
 | Import external Git changes into colocated JJ | Verify Git before/after | No | **Required when JJ mode enabled** | Explicit command/fact despite colocation's automatic behavior; failure degrades JJ, not Git. |
@@ -347,7 +347,7 @@ This capture path deliberately uses Git plumbing and therefore does not pretend 
 
 The temporary index path and operation data are on the same trusted local filesystem where possible. Cleanup occurs only after commit/repair makes it unnecessary.
 
-A capture's Git commit stores the aggregate tree, not the staged/unstaged partition. JJK v0.1 preserves the pre-operation index/worktree for rollback and leaves it untouched for non-navigation captures. A command that intentionally activates another state declares that HEAD/index/worktree will change and first protects dirty work. Full historical restoration of staging intent is a separately advertised Timeshift capability, not an implicit v0.1 claim.
+A capture's Git commit stores the aggregate tree, not the staged/unstaged partition. JJK v0.1 preserves the pre-operation index/worktree for rollback and leaves it untouched for non-navigation captures. Activating an ordinary state restores that aggregate tree into HEAD/index/worktree with a clean index after protecting dirty work. Exact historical staging intent is restored only when the state references a separately verified Timeshift workspace capsule; ordinary state capture never claims it.
 
 ### 6.2 Index and untracked preservation
 
@@ -368,7 +368,7 @@ Untracked protection requires durable content, not just path names: capture to v
 ### 6.3 Refs and HEAD
 
 - Standard branches remain `refs/heads/<name>` and are suitable for GitHub PRs.
-- `refs/jjk/states/<StateId>` MAY retain state commits; `refs/jjk/attempts/<AttemptId>` MAY retain attempt tips. Names are machine IDs, not mutable labels.
+- Every stable state commit has a mandatory local reachability anchor under `refs/jjk/states/<StateId>` until a verified archive/export/retention operation proves another durable root. `refs/jjk/attempts/<AttemptId>` MAY additionally retain attempt tips. Names are machine IDs, not mutable labels.
 - JJK MUST NOT expose every state as a visible branch or tag.
 - JJK-owned refs are excluded from default remote sync. Metadata sync uses explicit refspecs and a separately reported result.
 - Deletion/archive changes semantic projections first; retention-ref deletion is compare-and-swap and cannot make the only copy of unpushed user work unreachable without a verified recovery root.
@@ -397,7 +397,7 @@ Unclaimed top-level argv and the explicit collision-proof form `jjk git -- <argv
 - On Unix, JJK carries arguments as `OsString` and forwards each argument's bytes exactly; it performs no UTF-8 round trip, joining, splitting, quoting, globbing, alias expansion, or shell evaluation.
 - On Windows, JJK preserves each native wide argument as supplied by the runtime; it does not claim preservation of nonexistent Unix byte semantics.
 - The current cwd is unchanged and passed exactly.
-- The environment is inherited exactly, including Git config/SSH/credential variables. JJK adds, removes, and rewrites nothing.
+- The complete environment is inherited exactly, including Git config/SSH/credential variables. Recursion protection remains internal to the wrapper and is not exported to Git.
 - stdin, stdout, and stderr are inherited file descriptors/handles, preserving TTY detection, binary output, prompts, pager, color, and progress.
 - Unix uses process replacement (`exec`) where supported so Git receives terminal signals directly. A non-exec platform forwards supported signals/control events, waits, and returns Git's exit code; any platform parity limitation is reported by capability/doctor output.
 - Executable resolution follows the platform's normal direct process search. Git aliases then behave exactly as native Git because Git receives the arguments.
