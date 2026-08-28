@@ -11,7 +11,7 @@ JJK turns a Git working directory into a safe space for stateful, reversible hum
 | Class | Rule | Examples |
 |---|---|---|
 | JJK-native | Deliberately non-Git vocabulary; implements semantic state/attempt behavior | `save`, `step`, `nice`, `see`, `return`, `pick`, `fork`, `story`, `freeze`, `timeshift` |
-| Git-enhanced | Uses a Git name only when JJK deliberately adds state-aware value; native Git behavior remains inspectable | `status`, `diff`, `log`, `push`, `pull` |
+| Git-enhanced | Uses a Git name only when JJK deliberately adds state-aware value; native Git behavior remains inspectable | `status` in stable v0.1 |
 | Git passthrough | Every unenhanced Git command is executed by the real Git binary with original argv bytes, cwd, environment, stdio/TTY, signals, and exit status | `clone`, `rebase`, `merge`, `fetch`, `remote`, `config`, unknown future Git verbs |
 
 Routing invariant: an argv sequence not claimed by the versioned JJK-native/enhanced registry is passthrough, not an error and not guessed behavior.

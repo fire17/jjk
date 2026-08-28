@@ -65,7 +65,7 @@ pub fn resolve_state(states: &[StateReadModel], query: &str, include_archived: b
 
     // Exact IDs dominate human names. Exact names still refuse duplicate labels/messages.
     if let Some(state) = visible.iter().find(|state| state.id.to_string() == query) {
-        return Ok(Resolution::Exact { candidate: ResolutionCandidate::from(**state) });
+        return Ok(Resolution::Exact { candidate: ResolutionCandidate::from(*state) });
     }
     let exact = visible.iter().filter(|state| {
         state.label == query || state.message.as_deref() == Some(query)

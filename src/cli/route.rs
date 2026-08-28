@@ -64,7 +64,7 @@ const NATIVE: &[&str] = &[
     "remove", "timeshift", "handoff", "validate",
 ];
 
-const ENHANCED: &[&str] = &["status", "diff", "log", "push", "pull"];
+const ENHANCED: &[&str] = &["status"];
 
 /// Classify one first token. Empty invocation is JJK help.
 #[must_use]

@@ -40,7 +40,7 @@ The operation journal records preconditions, intended effects, pre/post fingerpr
 ## Command boundary
 
 - JJK-native verbs are deliberately unlike Git: `save`, `step`, `nice`, `see`, `return`, `pick`, `fork`, `story`, `freeze`, `timeshift`.
-- Git names are claimed only for deliberate enhancements: initially `status`, `diff`, `log`, `push`, and `pull` where contracts are met.
+- Git names are claimed only for deliberate enhancements. Stable v0.1 claims `status`; `init` is JJK-native initialization. `diff`, `log`, `push`, and `pull` remain native Git passthrough until separate enhanced contracts are implemented and proven.
 - All other argv is transparently executed by the resolved real Git binary. This includes `clone`, `rebase`, `merge`, aliases, helpers, and future Git commands.
 - Passthrough preserves original `OsString` arguments, cwd, environment, inherited stdin/stdout/stderr and TTY, signals, and exit status. It does not parse, normalize, reconcile, or post-process.
 

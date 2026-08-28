@@ -368,8 +368,9 @@ fn layout_graph(mut snapshot: RepositorySnapshot, include_archived: bool) -> Res
     let roots = children.get(&None).cloned().unwrap_or_default();
     for (index, root) in roots.into_iter().enumerate() {
         if index > 0 { next_lane += 1; }
+        let root_lane = next_lane;
         Walker { snapshot: &snapshot, visible: &visible, tips: &tips, children: &children, visiting: &mut visiting, visited: &mut visited,
-            nodes: &mut nodes, edges: &mut edges, next_lane: &mut next_lane }.walk(root, 0, next_lane)?;
+            nodes: &mut nodes, edges: &mut edges, next_lane: &mut next_lane }.walk(root, 0, root_lane)?;
     }
     if visited.len() != visible.len() {
         let state = *visible.keys().find(|id| !visited.contains(id)).expect("unvisited state exists");
