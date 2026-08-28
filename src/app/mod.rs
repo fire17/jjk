@@ -1,4 +1,4 @@
-//! Application use cases and pure command planning.
+//! Application services, command orchestration, and pure planning.
 
 pub mod command;
 pub mod plan;
