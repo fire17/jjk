@@ -24,7 +24,7 @@ Every user-visible command is exactly one class:
 |---|---|---|---|
 | **JJK-native** | Implements semantic operations such as `save`, `return`, `pick`, `fork`, or `promote` through the JJK transaction protocol. | Required before planning and after effects. | JJK owns rendering and exit codes. |
 | **Git-enhanced** | An explicitly named JJK operation that invokes Git but adds a declared semantic effect, such as `jjk sync fetch` or `jjk worktree create`. | Required; added effects appear in plan and receipt. | JJK owns rendering; native Git diagnostics are preserved as structured causes. |
-| **transparent Git passthrough** | `jjk git -- <argv…>` (and only that explicit surface) executes Git without semantic additions. | None in the passthrough process. The next JJK-native/enhanced command reconciles what Git changed. | Exact native argument, cwd, stdio, environment, signal, and exit behavior defined in §7. |
+| **transparent Git passthrough** | Any top-level argv sequence not claimed by the versioned JJK-native/enhanced registry executes Git without semantic additions; `jjk git -- <argv…>` is the explicit collision-proof form. | None in the passthrough process. The next JJK-native/enhanced command reconciles what Git changed. | Exact native argument, cwd, stdio, environment, signal, and exit behavior defined in §7. |
 
 JJK MUST NOT describe a passthrough command as enhanced, or silently add hooks, imports, network calls, status scans, color flags, pagers, config, or reconciliation to it.
 
@@ -392,7 +392,7 @@ Rules:
 
 ## 7. Transparent Git passthrough
 
-`jjk git -- <argv…>` is an escape hatch with a strict byte/native-string contract:
+Unclaimed top-level argv and the explicit collision-proof form `jjk git -- <argv…>` share one escape path with a strict byte/native-string contract:
 
 - On Unix, JJK carries arguments as `OsString` and forwards each argument's bytes exactly; it performs no UTF-8 round trip, joining, splitting, quoting, globbing, alias expansion, or shell evaluation.
 - On Windows, JJK preserves each native wide argument as supplied by the runtime; it does not claim preservation of nonexistent Unix byte semantics.
@@ -614,7 +614,7 @@ JJ parity MUST NOT assert identical operation-log topology or claim atomicity. I
 4. **Worktree isolation:** mutate one workspace while asserting every sibling HEAD/index/worktree/untracked fingerprint remains unchanged unless named in the plan.
 5. **Index/untracked monsters:** retain historical regressions for staged return, untracked stash, ignored `.worktrees`, detached HEAD, and branch-from-historical-state topology.
 6. **Remote/GitHub:** clone without JJK/JJ, build/test fixture, create/push branch, produce PR-compatible diff, simulate CI checkout/merge/fetch, omit optional refs, uninstall JJK, and prove the repository remains understandable Git.
-7. **Passthrough:** helper Git executable records raw/native argv entries, cwd identity, environment digest, TTY/pipe descriptors, signals, binary streams, and exit status; compare direct invocation to `jjk git --` byte/native-string-for-native-string.
+7. **Passthrough:** helper Git executable records raw/native argv entries, cwd identity, environment digest, TTY/pipe descriptors, signals, binary streams, and exit status; compare direct invocation to both unclaimed top-level `jjk <argv…>` and explicit `jjk git -- <argv…>` byte/native-string-for-native-string.
 8. **Fault injection:** terminate at every transition of `Prepared → Applying → AwaitingResolution/Verifying → Committed` and `Aborting → Aborted/RepairRequired`; restart and assert deterministic observe/repair without work loss.
 
 ### 14.4 Evidence levels

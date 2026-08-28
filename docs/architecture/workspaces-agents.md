@@ -36,7 +36,7 @@ Every public command is documented as exactly one class:
 
 1. **JJK-native**: operates on semantic JJK concepts and may be metadata-only, such as `jjk handoff show` or `jjk fleet status`.
 2. **Git-enhanced**: performs Git/JJ/filesystem work through a durable JJK operation, such as attempt/worktree provisioning, checkpointing, integration, or promotion.
-3. **Transparent Git passthrough**: `jjk git -- <args...>` executes Git without semantic enhancement and preserves the process contract exactly.
+3. **Transparent Git passthrough**: any top-level argv not claimed by the versioned JJK-native/enhanced registry, or the explicit collision-proof form `jjk git -- <args...>`, executes Git without semantic enhancement and preserves the process contract exactly.
 
 A JJK-native user intention may be implemented by a Git-enhanced command. The command reference must name the implementation class so automation knows whether Git state can change.
 
@@ -151,7 +151,7 @@ Physical removal exists only as the separately named, explicitly confirmed `work
 
 ### DEC-WA-012: Transparent Git passthrough is truly transparent
 
-`jjk git -- <args...>` preserves:
+Unclaimed top-level argv and explicit `jjk git -- <args...>` preserve:
 
 - each argv element losslessly as an OS string/byte sequence;
 - the caller's actual cwd;
@@ -892,7 +892,7 @@ Retries with the same idempotency key return the committed result or current rep
 | `jjk recover scan --format json` | JJK-native observation | Pending operations, stale leases, missing/divergent workspaces, suggested actions. |
 | `jjk recover plan <subject-id> --action adopt|fork|park|reconcile --format json` | JJK-native | Immutable recovery plan with prerequisites. |
 | `jjk recover apply <recovery-plan-id> --if-version <n> --format json` | Git-enhanced | Committed recovery or `repair_required`. |
-| `jjk git -- <args...>` | Transparent Git passthrough | Git's own byte streams and process status; no JSON. |
+| unclaimed `jjk <git-args...>` or explicit `jjk git -- <args...>` | Transparent Git passthrough | Git's own byte streams and process status; no JSON. |
 
 `@file` is a CLI transport convenience. The API itself receives typed JSON and does not depend on files.
 

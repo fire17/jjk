@@ -20,13 +20,13 @@ The product promise governing every branch of this wargame is:
 
 ### 1.1 Command classes
 
-Every public command is classified before implementation. The class is recorded in its durable operation record.
+Every public command is classified before implementation in the versioned command registry. JJK-native and Git-enhanced operations record their class durably; transparent passthrough deliberately writes no JJK record.
 
 | ID | Class | Meaning | Examples | Mutation ownership |
 |---|---|---|---|---|
 | `CC-JN` | **JJK-native** | The semantic transition exists because JJK exists. | `jjk save`, `jjk return`, `jjk fork`, `jjk pick`, `jjk promote`, `jjk sync` | JJK owns the complete cross-layer transaction. |
 | `CC-GE` | **Git-enhanced** | A Git operation is deliberately wrapped with JJK planning, isolation, provenance, and recovery. | planned submission refresh, protected branch promotion, external candidate import | JJK owns the plan and recovery; Git remains the mutation engine. |
-| `CC-GP` | **transparent Git passthrough** | Run Git exactly as if the user invoked it directly, then observe/reconcile without changing its process contract. | `jjk git -- <native Git argv…>` | Git owns the mutation and result; JJK may observe before/after but MUST NOT change Git behavior. |
+| `CC-GP` | **transparent Git passthrough** | Run any top-level argv not claimed by the versioned JJK-native/enhanced registry exactly as Git, with `jjk git -- <native Git argv…>` as the explicit collision-proof form. Reconcile only on the next JJK command. | `jjk rebase …`; `jjk remote …`; `jjk git -- <native Git argv…>` | Git owns the mutation and result; JJK does not observe, lock, or write metadata in the passthrough process. |
 
 A `CC-GP` implementation MUST accept native OS strings rather than UTF-8 strings. It MUST preserve argv bytes (Unix) or native wide strings (Windows), exact cwd, inherited environment, inherited stdin/stdout/stderr, terminal/TTY behavior, signals, and Git's exit result. If Git exits due to a signal, the wrapper MUST terminate by the same signal where the platform permits; it MUST NOT convert that result into a fabricated success or a JJK-specific exit code. JJK MUST NOT log full environment values because they may contain secrets.
 

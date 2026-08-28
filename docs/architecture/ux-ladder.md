@@ -170,7 +170,7 @@ Every mutation follows:
 
 - **JJK-native:** `status`, `current`, six beginner verbs, attempts, story, handoff, promotion policy, harvesting, transformations, Timeshift.
 - **Git-enhanced:** JJK plans semantic/evidence work around explicit Git effects, such as refreshing submission projections or promoting a verified state to a canonical ref. Plans print exact Git-facing effects.
-- **Transparent Git passthrough:** `jjk git -- <argv...>` forwards platform-native argv, cwd/env/stdio/signals/exit code; it does not lock, rewrite flags, prompt, journal semantic success, or print JJK output. Unix should prefer `exec`. External changes reconcile on the next JJK command. Any command that parses/decorates Git is Git-enhanced, not transparent.
+- **Transparent Git passthrough:** any top-level argv not claimed by the versioned JJK-native/enhanced registry, plus the explicit collision-proof form `jjk git -- <argv...>`, forwards platform-native argv, cwd/env/stdio/signals/exit code; it does not lock, rewrite flags, prompt, journal semantic success, or print JJK output. Unix should prefer `exec`. External changes reconcile on the next JJK command. Any command that parses/decorates Git is Git-enhanced, not transparent.
 
 ## 5. Rung specifications
 
