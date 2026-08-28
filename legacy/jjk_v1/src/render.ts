@@ -1,0 +1,798 @@
+import type { LaneRecord, MapHit, RepoData, StateRecord, TimeshiftRecord } from "./types";
+import type { AheadBehindStatus, WorktreeStatus } from "./git";
+import {
+  formatDate,
+  isDeletedState,
+  pad,
+  shortCommit,
+  shortStateId,
+  stateHasTag,
+  stateHasStar,
+  stateDisplayBranch,
+  stateGitCommit,
+  stateMessage,
+} from "./utils";
+
+const ANSI_RESET = "\u001b[0m";
+const STATE_GRAPH_LABEL_MESSAGE_MAX_LENGTH = 120;
+const STATE_TABLE_LABEL_MESSAGE_MAX_LENGTH = 72;
+const BRANCH_COLOR_PALETTE = [
+  31, 32, 33, 37, 38, 39, 43, 44, 45, 68,
+  69, 74, 75, 80, 81, 104, 105, 110, 111, 136,
+  142, 143, 149, 150, 172, 173, 174, 179, 180, 181,
+  203, 204, 205, 206, 207, 208, 209, 214, 215, 221,
+];
+
+export function renderStateSummary(state: StateRecord): string {
+  return renderStateSummaryWithOptions(state);
+}
+
+export function renderStateSummaryWithOptions(
+  state: StateRecord,
+  options?: {
+    includeLane?: boolean;
+  },
+): string {
+  const parts = [
+    shortStateId(state.id),
+    `git=${shortCommit(stateGitCommit(state))}`,
+    `[${state.kind}]`,
+    state.label,
+    `branch=${stateDisplayBranch(state)}`,
+    formatDate(state.createdAt),
+  ];
+
+  if (options?.includeLane !== false) {
+    parts.splice(3, 0, `lane=${state.lane}`);
+  }
+
+  return parts.join(" ");
+}
+
+function appendStateMessage(text: string, state: StateRecord): string {
+  const message = stateMessage(state);
+  return message ? `${text} | ${message}` : text;
+}
+
+function singleLine(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function formatStateTableLabelMessage(state: StateRecord): string {
+  return truncate(
+    singleLine(appendStateMessage(stateLabelWithMarkers(state), state)),
+    STATE_TABLE_LABEL_MESSAGE_MAX_LENGTH,
+  );
+}
+
+function formatStateGraphLine(text: string, state: StateRecord): string {
+  const message = stateMessage(state);
+  if (!message) {
+    return text;
+  }
+
+  const separator = " | ";
+  const maxMessageLength = Math.max(
+    3,
+    STATE_GRAPH_LABEL_MESSAGE_MAX_LENGTH - text.length - separator.length,
+  );
+  return `${text}${separator}${truncate(singleLine(message), maxMessageLength)}`;
+}
+
+function stateLabelWithMarkers(
+  state: StateRecord,
+  options?: {
+    includeStar?: boolean;
+  },
+): string {
+  const markers = [
+    options?.includeStar === false ? "" : stateHasStar(state) ? "★" : "",
+    stateHasTag(state, "thumbsup") ? "👍" : "",
+    stateHasTag(state, "thumbsdown") ? "👎" : "",
+  ].filter(Boolean);
+  const prefix = markers.length > 0 ? `${markers.join("")} ` : "";
+  return `${prefix}${state.label}`;
+}
+
+function shortLinkedStateId(stateId: string | undefined): string {
+  return stateId ? shortStateId(stateId) : "-";
+}
+
+export function renderStateChoiceTable(
+  states: StateRecord[],
+  options?: {
+    colorize?: boolean;
+  },
+): string {
+  if (states.length === 0) {
+    return "";
+  }
+
+  const separator = "  ";
+  const indexWidth = Math.max(2, String(states.length).length);
+  const idWidth = Math.max(8, ...states.map((state) => shortStateId(state.id).length));
+  const kindWidth = Math.max(6, ...states.map((state) => state.kind.length));
+  const labelWidth = Math.max(18, ...states.map((state) => Math.min(state.label.length, 40)));
+  const branchWidth = Math.max(
+    20,
+    ...states.map((state) => Math.min(stateDisplayBranch(state).length, 24)),
+  );
+
+  const lines = [
+    `${pad("#", indexWidth)}${separator}${pad("id", idWidth)}${separator}${pad("kind", kindWidth)}${separator}${pad("label", labelWidth)}${separator}${pad("branch", branchWidth)}${separator}date`,
+  ];
+
+  states.forEach((state, index) => {
+    const line = `${pad(String(index + 1), indexWidth)}${separator}${pad(shortStateId(state.id), idWidth)}${separator}${pad(state.kind, kindWidth)}${separator}${pad(truncate(state.label, 40), labelWidth)}${separator}${pad(truncate(stateDisplayBranch(state), 24), branchWidth)}${separator}${formatDate(state.createdAt)}`;
+    lines.push(
+      colorizeBranchLine(
+        line,
+        stateDisplayBranch(state),
+        options?.colorize === true,
+        true,
+        false,
+      ),
+    );
+  });
+
+  return lines.join("\n");
+}
+
+export function renderGraph(
+  repo: RepoData,
+  options?: {
+    currentStateId?: string | null;
+    colorize?: boolean;
+    includeDeleted?: boolean;
+    compactSameBranch?: boolean;
+    branchAlignedV3?: boolean;
+    trimOneIndentOnSameBranch?: boolean;
+  },
+): string {
+  const allStates = repo.states
+    .slice()
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const visibleStateIds = new Set(
+    allStates
+      .filter((state) => options?.includeDeleted === true || !isDeletedState(state))
+      .map((state) => state.id),
+  );
+  const children = new Map<string | null, StateRecord[]>();
+  const leafStateIds = resolveBranchLeafStateIds(
+    allStates.filter((state) => visibleStateIds.has(state.id)),
+    repo,
+  );
+  const stateById = new Map(allStates.map((state) => [state.id, state] as const));
+
+  function visibleParentId(state: StateRecord): string | null {
+    let parentId = state.parentStateId;
+    while (parentId) {
+      if (visibleStateIds.has(parentId)) {
+        return parentId;
+      }
+      parentId = stateById.get(parentId)?.parentStateId ?? null;
+    }
+    return null;
+  }
+
+  for (const state of allStates) {
+    if (!visibleStateIds.has(state.id)) {
+      continue;
+    }
+    const parent = visibleParentId(state);
+    if (!children.has(parent)) {
+      children.set(parent, []);
+    }
+    children.get(parent)!.push(state);
+  }
+
+  const lines: string[] = [];
+
+  if (options?.branchAlignedV3 === true) {
+    const prefixForColumns = (columns: boolean[]): string =>
+      columns.map((showLine) => (showLine ? "│  " : "   ")).join("");
+
+    function walkV3(state: StateRecord, columns: boolean[], siblingContinues: boolean): void {
+      const connector = siblingContinues ? "├─" : "└─";
+      const displayBranch = stateDisplayBranch(state);
+      const isCurrent = state.id === options?.currentStateId;
+      const isLeaf = leafStateIds.has(state.id);
+      const currentMarker = isCurrent ? "*" : " ";
+      const leafMarker = isLeaf ? "^" : " ";
+      const starMarker = stateHasStar(state) ? "★ " : "  ";
+      const line = formatStateGraphLine(
+        `${prefixForColumns(columns)}${connector} ${currentMarker}${leafMarker} ${starMarker}${shortStateId(state.id)} [${state.kind}] ${stateLabelWithMarkers(state, { includeStar: false })} (${displayBranch})`,
+        state,
+      );
+      lines.push(
+        colorizeBranchLine(
+          line,
+          displayBranch,
+          options?.colorize === true,
+          isLeaf,
+          isCurrent,
+        ),
+      );
+
+      const childNodes = children.get(state.id) ?? [];
+      const sameLevelColumns =
+        columns.length === 0
+          ? []
+          : [...columns.slice(0, -1), siblingContinues];
+      const deeperColumns = [...columns, siblingContinues];
+
+      childNodes.forEach((child, index) => {
+        const childSiblingContinues = index < childNodes.length - 1;
+        const childNeedsExtraDepth =
+          childNodes.length > 1 || stateDisplayBranch(child) !== displayBranch;
+        walkV3(
+          child,
+          childNeedsExtraDepth ? deeperColumns : sameLevelColumns,
+          childSiblingContinues,
+        );
+      });
+    }
+
+    const roots = children.get(null) ?? [];
+    roots.forEach((root, index) => {
+      walkV3(root, [], index < roots.length - 1);
+    });
+
+    if (lines.length === 0) {
+      return "No states saved yet.";
+    }
+
+    return ["★ starred    * current state    ^ branch leaf", "", ...lines].join("\n");
+  }
+
+  if (options?.trimOneIndentOnSameBranch === true) {
+    const prefixForColumns = (columns: boolean[]): string =>
+      columns.map((showLine) => (showLine ? "│  " : "   ")).join("");
+
+    function trimOneBlankIndent(columns: boolean[]): boolean[] {
+      const index = columns.lastIndexOf(false);
+      if (index === -1) {
+        return columns;
+      }
+      return [...columns.slice(0, index), ...columns.slice(index + 1)];
+    }
+
+    function walkV4(parentId: string | null, childBaseColumns: boolean[], parentBranch: string | null): void {
+      const nodes = children.get(parentId) ?? [];
+      nodes.forEach((state, index) => {
+        const isLast = index === nodes.length - 1;
+        const connector = isLast ? "└─" : "├─";
+        const displayBranch = stateDisplayBranch(state);
+        const isCurrent = state.id === options?.currentStateId;
+        const isLeaf = leafStateIds.has(state.id);
+        const currentMarker = isCurrent ? "*" : " ";
+        const leafMarker = isLeaf ? "^" : " ";
+        const starMarker = stateHasStar(state) ? "★ " : "  ";
+        const displayColumns =
+          parentBranch !== null && displayBranch === parentBranch
+            ? trimOneBlankIndent(childBaseColumns)
+            : childBaseColumns;
+        const line = formatStateGraphLine(
+          `${prefixForColumns(displayColumns)}${connector} ${currentMarker}${leafMarker} ${starMarker}${shortStateId(state.id)} [${state.kind}] ${stateLabelWithMarkers(state, { includeStar: false })} (${displayBranch})`,
+          state,
+        );
+        lines.push(
+          colorizeBranchLine(
+            line,
+            displayBranch,
+            options?.colorize === true,
+            isLeaf,
+            isCurrent,
+          ),
+        );
+        walkV4(state.id, [...displayColumns, !isLast], displayBranch);
+      });
+    }
+
+    walkV4(null, [], null);
+    if (lines.length === 0) {
+      return "No states saved yet.";
+    }
+
+    return ["★ starred    * current state    ^ branch leaf", "", ...lines].join("\n");
+  }
+
+  function walk(parentId: string | null, alignedPrefix: string, branchedPrefix: string, parentBranch: string | null): void {
+    const nodes = children.get(parentId) ?? [];
+    nodes.forEach((state, index) => {
+      const isLast = index === nodes.length - 1;
+      const connector = isLast ? "└─" : "├─";
+      const starMarker = stateHasStar(state) ? "★ " : "  ";
+      const currentMarker = state.id === options?.currentStateId ? "*" : " ";
+      const isCurrent = state.id === options?.currentStateId;
+      const isLeaf = leafStateIds.has(state.id);
+      const leafMarker = isLeaf ? "^" : " ";
+      const displayBranch = stateDisplayBranch(state);
+      const linePrefix =
+        options?.compactSameBranch === true && parentBranch !== null && displayBranch === parentBranch
+          ? alignedPrefix
+          : branchedPrefix;
+      const line = formatStateGraphLine(
+        `${linePrefix}${connector} ${currentMarker}${leafMarker} ${starMarker}${shortStateId(state.id)} [${state.kind}] ${stateLabelWithMarkers(state, { includeStar: false })} (${displayBranch})`,
+        state,
+      );
+      lines.push(
+        colorizeBranchLine(
+          line,
+          displayBranch,
+          options?.colorize === true,
+          isLeaf,
+          isCurrent,
+        ),
+      );
+      walk(state.id, linePrefix, `${linePrefix}${isLast ? "   " : "│  "}`, displayBranch);
+    });
+  }
+
+  walk(null, "", "", null);
+  if (lines.length === 0) {
+    return "No states saved yet.";
+  }
+
+  return ["★ starred    * current state    ^ branch leaf", "", ...lines].join("\n");
+}
+
+export function renderLogGraph(
+  repo: RepoData,
+  options?: {
+    currentStateId?: string | null;
+    colorize?: boolean;
+    includeDeleted?: boolean;
+  },
+): string {
+  const visibleStates = repo.states
+    .filter((state) => options?.includeDeleted === true || !isDeletedState(state))
+    .slice()
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+
+  if (visibleStates.length === 0) {
+    return "No states saved yet.";
+  }
+
+  const visibleStateIds = new Set(visibleStates.map((state) => state.id));
+  const stateById = new Map(visibleStates.map((state) => [state.id, state] as const));
+  const leafStateIds = resolveBranchLeafStateIds(visibleStates.slice().reverse(), repo);
+
+  function visibleParentId(state: StateRecord): string | null {
+    let parentId = state.parentStateId;
+    while (parentId) {
+      if (visibleStateIds.has(parentId)) {
+        return parentId;
+      }
+      parentId = stateById.get(parentId)?.parentStateId ?? null;
+    }
+    return null;
+  }
+
+  const active: string[] = [];
+  const lines: string[] = [];
+
+  for (const state of visibleStates) {
+    if (!active.includes(state.id)) {
+      active.push(state.id);
+    }
+
+    const column = active.indexOf(state.id);
+    const graphPrefix = active
+      .map((_, index) => (index === column ? "*" : "|"))
+      .join(" ");
+    const decorations: string[] = [];
+    if (state.id === options?.currentStateId) {
+      decorations.push("current");
+    }
+    if (leafStateIds.has(state.id)) {
+      decorations.push("leaf");
+    }
+    const decorationText = decorations.length > 0 ? ` [${decorations.join(", ")}]` : "";
+    const line = formatStateGraphLine(
+      `${graphPrefix} ${shortStateId(state.id)} [${state.kind}] ${stateLabelWithMarkers(state)} (${stateDisplayBranch(state)})${decorationText}`,
+      state,
+    );
+    lines.push(
+      colorizeBranchLine(
+        line,
+        stateDisplayBranch(state),
+        options?.colorize === true,
+        leafStateIds.has(state.id),
+        state.id === options?.currentStateId,
+      ),
+    );
+
+    const parentId = visibleParentId(state);
+    if (!parentId) {
+      active.splice(column, 1);
+      continue;
+    }
+
+    const parentColumn = active.indexOf(parentId);
+    if (parentColumn === -1) {
+      active[column] = parentId;
+      continue;
+    }
+
+    active.splice(column, 1);
+  }
+
+  return lines.join("\n");
+}
+
+export function renderStateTable(
+  states: StateRecord[],
+  options?: {
+    colorize?: boolean;
+    currentStateId?: string | null;
+    repo?: RepoData;
+    includeDeleted?: boolean;
+    maxWidth?: number;
+  },
+): string {
+  const visibleStates = states.filter((state) => options?.includeDeleted === true || !isDeletedState(state));
+  if (visibleStates.length === 0) {
+    return "No states saved yet.";
+  }
+
+  const rawColumns = [
+    {
+      header: "id",
+      value: (state: StateRecord) => shortStateId(state.id),
+      width: Math.max(8, "id".length, ...visibleStates.map((state) => shortStateId(state.id).length)),
+      minWidth: 4,
+    },
+    {
+      header: "git",
+      value: (state: StateRecord) => shortCommit(stateGitCommit(state), 8),
+      width: Math.max(
+        8,
+        "git".length,
+        ...visibleStates.map((state) => shortCommit(stateGitCommit(state), 8).length),
+      ),
+      minWidth: 4,
+    },
+    {
+      header: "kind",
+      value: (state: StateRecord) => state.kind,
+      width: Math.max(6, "kind".length, ...visibleStates.map((state) => state.kind.length)),
+      minWidth: 4,
+    },
+    {
+      header: "branch",
+      value: (state: StateRecord) => stateDisplayBranch(state),
+      width: Math.max(
+        6,
+        "branch".length,
+        ...visibleStates.map((state) => stateDisplayBranch(state).length),
+      ),
+      minWidth: 6,
+    },
+    {
+      header: "label | message",
+      value: (state: StateRecord) => formatStateTableLabelMessage(state),
+      width: Math.max(
+        "label | message".length,
+        ...visibleStates.map((state) => formatStateTableLabelMessage(state).length),
+      ),
+      minWidth: 12,
+    },
+    {
+      header: "base",
+      value: (state: StateRecord) => shortLinkedStateId(state.metadata?.base),
+      width: Math.max(4, "base".length, ...visibleStates.map((state) => shortLinkedStateId(state.metadata?.base).length)),
+      minWidth: 4,
+    },
+    {
+      header: "cherry",
+      value: (state: StateRecord) => shortLinkedStateId(state.metadata?.cherry),
+      width: Math.max(
+        6,
+        "cherry".length,
+        ...visibleStates.map((state) => shortLinkedStateId(state.metadata?.cherry).length),
+      ),
+      minWidth: 6,
+    },
+    {
+      header: "datetime",
+      value: (state: StateRecord) => formatDate(state.createdAt),
+      width: Math.max(
+        8,
+        "datetime".length,
+        ...visibleStates.map((state) => formatDate(state.createdAt).length),
+      ),
+      minWidth: 8,
+    },
+  ];
+  const maxWidth = options?.maxWidth ?? (typeof process !== "undefined" ? process.stdout?.columns : undefined);
+  const separator = determineTableSeparator(rawColumns.length, maxWidth);
+  const columns = fitTableColumns(rawColumns, separator.length, maxWidth);
+  const lines = [
+    columns
+      .map((column) => pad(truncate(column.header, column.width), column.width))
+      .join(separator),
+  ];
+  const leafStateIds = resolveBranchLeafStateIds(visibleStates, options?.repo);
+
+  for (const state of visibleStates) {
+    const lineWithLinks = columns
+      .map((column) => pad(truncate(column.value(state), column.width), column.width))
+      .join(separator);
+    lines.push(
+      colorizeBranchLine(
+        lineWithLinks,
+        stateDisplayBranch(state),
+        options?.colorize === true,
+        leafStateIds.has(state.id),
+        state.id === options?.currentStateId,
+      ),
+    );
+  }
+
+  return lines.join("\n");
+}
+
+function determineTableSeparator(columnCount: number, maxWidth?: number): string {
+  if (!maxWidth || columnCount <= 1) {
+    return "  ";
+  }
+
+  const wideSeparatorWidth = (columnCount - 1) * 2;
+  return maxWidth >= columnCount * 4 + wideSeparatorWidth ? "  " : " ";
+}
+
+function fitTableColumns(
+  columns: Array<{
+    header: string;
+    width: number;
+    minWidth: number;
+    value: (state: StateRecord) => string;
+  }>,
+  separatorWidth: number,
+  maxWidth?: number,
+): Array<{
+  header: string;
+  width: number;
+  minWidth: number;
+  value: (state: StateRecord) => string;
+}> {
+  if (!maxWidth || maxWidth <= 0) {
+    return columns;
+  }
+
+  const fitted = columns.map((column) => ({ ...column }));
+  const shrinkOrder = [4, 3, 7, 6, 5, 2, 1, 0];
+  const totalWidth = () =>
+    fitted.reduce((sum, column) => sum + column.width, 0) + Math.max(0, fitted.length - 1) * separatorWidth;
+
+  while (totalWidth() > maxWidth) {
+    let shrunk = false;
+    for (const index of shrinkOrder) {
+      const column = fitted[index];
+      if (!column || column.width <= column.minWidth) {
+        continue;
+      }
+      column.width -= 1;
+      shrunk = true;
+      if (totalWidth() <= maxWidth) {
+        break;
+      }
+    }
+    if (!shrunk) {
+      break;
+    }
+  }
+
+  return fitted;
+}
+
+function resolveBranchLeafStateIds(
+  states: StateRecord[],
+  repo?: RepoData,
+): Set<string> {
+  const latestByDisplayBranch = new Map<string, StateRecord>();
+
+  for (const state of states) {
+    latestByDisplayBranch.set(stateDisplayBranch(state), state);
+  }
+
+  if (repo) {
+    for (const [branch, laneName] of Object.entries(repo.branchLaneMap)) {
+      const lane = repo.lanes[laneName];
+      const stateId = lane?.currentStateId;
+      if (!stateId) {
+        continue;
+      }
+      const state = states.find((candidate) => candidate.id === stateId);
+      if (!state) {
+        continue;
+      }
+      if (stateDisplayBranch(state) !== branch) {
+        continue;
+      }
+      latestByDisplayBranch.set(branch, state);
+    }
+  }
+
+  return new Set(Array.from(latestByDisplayBranch.values()).map((state) => state.id));
+}
+
+function colorizeBranchLine(
+  line: string,
+  branch: string,
+  enabled: boolean,
+  isLeaf: boolean,
+  isCurrent: boolean,
+): string {
+  if (!enabled) {
+    return line;
+  }
+
+  const color = branchAnsiColor(branch);
+  const dim = isLeaf || isCurrent ? "" : "\u001b[2m";
+  const bold = isCurrent ? "\u001b[1m" : "";
+  return `${bold}${dim}\u001b[38;5;${color}m${line}${ANSI_RESET}`;
+}
+
+function branchAnsiColor(branch: string): number {
+  if (branch === "main") {
+    return 111;
+  }
+
+  let hash = 2166136261;
+  for (let index = 0; index < branch.length; index += 1) {
+    hash ^= branch.charCodeAt(index);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+
+  const mixed = scrambleHash(hash ^ 0x9e3779b9);
+  return BRANCH_COLOR_PALETTE[mixed % BRANCH_COLOR_PALETTE.length] ?? 111;
+}
+
+function truncate(value: string, length: number): string {
+  return value.length > length ? `${value.slice(0, length - 3)}...` : value;
+}
+
+function scrambleHash(value: number): number {
+  let hash = value >>> 0;
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 0x7feb352d) >>> 0;
+  hash ^= hash >>> 15;
+  hash = Math.imul(hash, 0x846ca68b) >>> 0;
+  hash ^= hash >>> 16;
+  return hash >>> 0;
+}
+
+export function renderStory(states: StateRecord[]): string {
+  const memorable = states.filter((state) =>
+    state.kind === "nice" || stateHasStar(state)
+  );
+
+  if (memorable.length === 0) {
+    return "No `nice` or `star` states yet.";
+  }
+
+  return memorable
+    .map((state) =>
+      `${shortStateId(state.id)} [${state.kind}] ${state.label}\n  ${state.description}\n  ${formatDate(state.createdAt)} on ${stateDisplayBranch(state)}`
+    )
+    .join("\n\n");
+}
+
+export function renderCurrentState(input: {
+  state: StateRecord;
+  parentState: StateRecord | null;
+  workspaceBranch: string | null;
+  historyIndex: number;
+  historyLength: number;
+}): string {
+  const parent = input.parentState
+    ? `${shortStateId(input.parentState.id)} [${input.parentState.kind}] ${input.parentState.label}`
+    : "none";
+  const workspace = input.workspaceBranch ?? "detached";
+
+  return [
+    `current state: ${shortStateId(input.state.id)} [${input.state.kind}] ${input.state.label}`,
+    `description: ${input.state.description}`,
+    `lane: ${input.state.lane}`,
+    `branch: ${stateDisplayBranch(input.state)}`,
+    `workspace: ${workspace}`,
+    `git: ${shortCommit(stateGitCommit(input.state))}`,
+    `parent: ${parent}`,
+    `saved at: ${formatDate(input.state.createdAt)}`,
+    `history: ${input.historyIndex + 1}/${input.historyLength}`,
+  ].join("\n");
+}
+
+export function renderDoctor(input: {
+  root: string;
+  branch: string;
+  jjAvailable: boolean;
+  lane: LaneRecord | null;
+  stateCount: number;
+  remoteConfigured: boolean;
+}): string {
+  const lines = [
+    `safe space: ${input.root}`,
+    `branch: ${input.branch}`,
+    `jj available: ${input.jjAvailable ? "yes" : "no"}`,
+    `current lane: ${input.lane ? input.lane.name : "none"}`,
+    `saved states: ${input.stateCount}`,
+    `origin remote: ${input.remoteConfigured ? "configured" : "missing"}`,
+  ];
+
+  return lines.join("\n");
+}
+
+export function renderMap(hits: MapHit[]): string {
+  if (hits.length === 0) {
+    return "No project markers found.";
+  }
+
+  return hits
+    .map((hit) => `${hit.path}\n  ${hit.markers.join(", ")}`)
+    .join("\n\n");
+}
+
+export function renderTimeshifts(timeshifts: TimeshiftRecord[]): string {
+  if (timeshifts.length === 0) {
+    return "No timeshifts saved yet.";
+  }
+
+  return timeshifts
+    .map((entry) =>
+      `${entry.id} ${entry.label} (${entry.branch}, ${entry.lane}) ${formatDate(entry.createdAt)}`
+    )
+    .join("\n");
+}
+
+export function renderLanes(lanes: LaneRecord[], currentBranch: string): string {
+  if (lanes.length === 0) {
+    return "No lanes recorded yet.";
+  }
+
+  return lanes
+    .map((lane) => {
+      const marker = lane.branch === currentBranch ? "*" : " ";
+      return `${marker} ${lane.name} -> ${lane.branch} (base: ${lane.baseRef})`;
+    })
+    .join("\n");
+}
+
+export function renderStatus(input: {
+  root: string;
+  branch: string;
+  headCommit: string | null;
+  lane: LaneRecord | null;
+  worktree: WorktreeStatus;
+  latestState: StateRecord | null;
+  stateCount: number;
+  jjAvailable: boolean;
+  remoteConfigured: boolean;
+  aheadBehind: AheadBehindStatus | null;
+}): string {
+  const latest = input.latestState
+    ? `${shortStateId(input.latestState.id)} [${input.latestState.kind}] ${input.latestState.label}`
+    : "none";
+  const head = input.headCommit ? input.headCommit.slice(0, 12) : "unborn";
+  const worktree = input.worktree.dirty
+    ? `dirty (${input.worktree.changedFiles} files, staged=${input.worktree.staged}, unstaged=${input.worktree.unstaged}, untracked=${input.worktree.untracked})`
+    : "clean";
+  const upstream = input.aheadBehind
+    ? `ahead=${input.aheadBehind.ahead} behind=${input.aheadBehind.behind}`
+    : "no upstream";
+
+  return [
+    `safe space: ${input.root}`,
+    `branch: ${input.branch}`,
+    `head: ${head}`,
+    `current lane: ${input.lane ? input.lane.name : "none"}`,
+    `worktree: ${worktree}`,
+    `latest state: ${latest}`,
+    `saved states: ${input.stateCount}`,
+    `jj available: ${input.jjAvailable ? "yes" : "no"}`,
+    `origin remote: ${input.remoteConfigured ? "configured" : "missing"}`,
+    `upstream: ${upstream}`,
+  ].join("\n");
+}

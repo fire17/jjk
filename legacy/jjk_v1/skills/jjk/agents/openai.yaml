@@ -1,0 +1,4 @@
+interface:
+  display_name: "JJK Workflow"
+  short_description: "Explain, teach, and operate the jjk state workflow"
+  default_prompt: "Use $jjk to explain, teach, or operate the jjk state-first workflow in this project, grounding answers in the current code and tests when needed."
