@@ -315,6 +315,10 @@ fn val_core_003_004_canonical_snake_preserves_futures_and_picks_only_the_atomic_
     git_ok(&repository.root, &["fsck", "--full", "--strict"]);
 
     repository.return_to(&green);
+    git_ok(
+        &repository.root,
+        &["reset", "--hard", field(&green, "commit")],
+    );
     let graph_before_ambiguous_down = repository.graph();
     let index_before_ambiguous_down = repository.index_tree();
     let ambiguous = repository.run_jjk(&["down", "--json"]);

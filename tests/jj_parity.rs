@@ -170,14 +170,24 @@ fn execute_workflow(sandbox: &Sandbox, expected_jj_state: &str) -> (SemanticOutc
             .is_some_and(|id| !id.is_empty())
     );
 
-    // Capability observation deliberately precedes every semantic mutation in this fixture.
+    // Setup imports the reachable baseline (including JJ's colocated working-copy commit when
+    // present). Repeating capability observation must not append another event before the first
+    // user-authored mutation.
     let doctor = sandbox.jjk_json(&["doctor", "--json"]);
     assert_eq!(doctor["command"], "doctor");
     assert_eq!(doctor["healthy"], true);
     assert_jj_report(&doctor, expected_jj_state);
+    let observed_events = doctor["journal_events"]
+        .as_u64()
+        .expect("journal_events integer");
+    assert!(
+        observed_events > 0,
+        "setup must import the reachable baseline"
+    );
+    let repeated_doctor = sandbox.jjk_json(&["doctor", "--json"]);
     assert_eq!(
-        doctor["journal_events"], 0,
-        "capability must be observed before the first semantic mutation"
+        repeated_doctor["journal_events"], doctor["journal_events"],
+        "doctor must not mutate the imported baseline"
     );
 
     fs::write(sandbox.root.join("story.txt"), "green\n").expect("write green state");
@@ -217,10 +227,16 @@ fn execute_workflow(sandbox: &Sandbox, expected_jj_state: &str) -> (SemanticOutc
 
     sandbox.git(&["fsck", "--full"]);
     let status = sandbox.git(&["status", "--porcelain=v2"]);
+    let status_text = String::from_utf8(status.stdout).expect("status is UTF-8 in fixture");
+    assert_eq!(
+        status_text.lines().count(),
+        1,
+        "workflow must preserve exactly the intentional staged story.txt change: {status_text}"
+    );
     assert!(
-        status.stdout.is_empty(),
-        "workflow left Git dirty: {}",
-        String::from_utf8_lossy(&status.stdout)
+        status_text.contains("story.txt")
+            && status_text.contains("a5b73ed2e94dafd12d02ab7b3ba3506cf8e642a2"),
+        "return must restore the captured green index/worktree bytes: {status_text}"
     );
 
     (
@@ -281,6 +297,7 @@ fn canonical_states(graph: &Value) -> Vec<CanonicalState> {
         .collect();
     let mut states: Vec<_> = rows
         .iter()
+        .filter(|state| required_string(state, "kind") != "imported")
         .map(|state| CanonicalState {
             kind: required_string(state, "kind").to_owned(),
             label: required_string(state, "label").to_owned(),
@@ -452,9 +469,17 @@ fn broken_jj_degrades_loudly_before_semantic_mutation_and_git_stays_usable() {
     let before = git_fingerprint(&sandbox);
     let doctor = sandbox.jjk_json(&["doctor", "--json"]);
     assert_jj_report(&doctor, "degraded");
+    let baseline_events = doctor["journal_events"]
+        .as_u64()
+        .expect("journal_events integer");
+    assert!(
+        baseline_events > 0,
+        "setup must import the reachable baseline"
+    );
+    let repeated_doctor = sandbox.jjk_json(&["doctor", "--json"]);
     assert_eq!(
-        doctor["journal_events"], 0,
-        "broken JJ must degrade before any semantic mutation"
+        repeated_doctor["journal_events"], doctor["journal_events"],
+        "broken JJ detection must not mutate the imported baseline"
     );
     assert_eq!(
         before,

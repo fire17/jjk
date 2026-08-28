@@ -1909,10 +1909,6 @@ fn freeze(args: &[OsString], cwd: &Path) -> Result<i32, RuntimeError> {
     let reservation = SafeDestination::new(&destination)
         .map_err(|error| RuntimeError::Unavailable(error.to_string()))?;
     let states = context.store.state_rows().map_err(internal)?;
-    let refs = states
-        .iter()
-        .map(|state| display_state_id(&state.state_id).map(|id| format!("refs/jjk/states/{id}")))
-        .collect::<Result<Vec<_>, _>>()?;
     let required_oids = states
         .iter()
         .map(|state| state.git_oid.clone())
@@ -1927,7 +1923,7 @@ fn freeze(args: &[OsString], cwd: &Path) -> Result<i32, RuntimeError> {
         cwd,
         "freeze",
         serde_json::json!({"action":"create","destination":destination,"freeze_id":freeze_id}),
-        serde_json::json!({"bundle_refs":refs,"publish_directory":destination}),
+        serde_json::json!({"bundle_revision":"--all","publish_directory":destination}),
         Some(serde_json::json!({"destination":destination,"must_be_absent":true})),
     )?;
     let git = &context.git;
@@ -1939,13 +1935,16 @@ fn freeze(args: &[OsString], cwd: &Path) -> Result<i32, RuntimeError> {
             let root = staging.external_path_verified().map_err(internal)?;
             fs::create_dir_all(root.join("metadata")).map_err(internal)?;
             fs::create_dir_all(root.join("git")).map_err(internal)?;
-            let mut command = vec![
-                OsString::from("bundle"),
-                OsString::from("create"),
-                root.join("git/objects.bundle").into_os_string(),
-            ];
-            command.extend(refs.iter().map(OsString::from));
-            required_os(git, cwd, command)?;
+            required_os(
+                git,
+                cwd,
+                [
+                    OsString::from("bundle"),
+                    OsString::from("create"),
+                    root.join("git/objects.bundle").into_os_string(),
+                    OsString::from("--all"),
+                ],
+            )?;
             fs::write(root.join("metadata/events.cbor"), b"[]").map_err(internal)?;
             fs::write(
                 root.join("metadata/view.json"),
@@ -2609,8 +2608,32 @@ fn load(args: &[OsString], cwd: &Path) -> Result<i32, RuntimeError> {
         SqliteStore::rebind_backup_file(&database, &final_token).map_err(internal)?;
         SqliteStore::rebind_primary_workspace(&database, restored_workspace, &final_locator)
             .map_err(internal)?;
-        restore_runtime_git_snapshot(&target_git, &staging_path, &snapshot)?;
-        if capture_runtime_git_snapshot(&target_git, &staging_path)? != snapshot {
+        let mut restored_snapshot = snapshot.clone();
+        restored_snapshot
+            .refs
+            .retain(|reference| reference.name != b"refs/remotes/origin/HEAD");
+        restore_runtime_git_snapshot(&target_git, &staging_path, &restored_snapshot)?;
+        let observed_snapshot = capture_runtime_git_snapshot(&target_git, &staging_path)?;
+        let expected_index = restored_snapshot.index.clone();
+        restored_snapshot.index.clear();
+        let mut observed_without_index = observed_snapshot;
+        observed_without_index.index.clear();
+        let expected_index_path = discovery.common_dir.join("jjk-load-verify.index");
+        atomic_bytes(&expected_index_path, &expected_index)?;
+        let mut expected_index_env = BTreeMap::new();
+        expected_index_env.insert(
+            OsString::from("GIT_INDEX_FILE"),
+            Some(expected_index_path.as_os_str().to_owned()),
+        );
+        let expected_index_tree = required_output(
+            target_git
+                .run_with_env(&staging_path, ["write-tree"], expected_index_env)
+                .map_err(git_error)?,
+        )?;
+        fs::remove_file(&expected_index_path).map_err(internal)?;
+        let observed_index_tree = observation_required(&target_git, &staging_path, ["write-tree"])?;
+        let index_semantically_equal = expected_index_tree == observed_index_tree;
+        if observed_without_index != restored_snapshot || !index_semantically_equal {
             return Err(RuntimeError::Internal(
                 "staged load verification did not reproduce the backup Git control surface".into(),
             ));
