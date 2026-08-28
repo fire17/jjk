@@ -298,7 +298,6 @@ Transparent Git passthrough means JJK delegates to the configured Git binary wit
 struct PassthroughOracle {
     direct: CommandObservation,
     via_jjk: CommandObservation,
-    allowed_env_delta: BTreeSet<OsString>,
 }
 ```
 
@@ -546,6 +545,8 @@ struct ValidationResult {
 **Evidence:** file digest, `git diff-tree` for source parent/source/result, stable patch IDs, all ref OIDs before/after, canonical event JSON.  
 **Fail:** any unrelated hunk/path, missing provenance, changed sibling/source, or non-current result.
 
+Mandatory delta matrix: add/delete/rename, executable-bit transition, symlink target/type transition, binary blob, gitlink entry, empty file, mode-only change, and overlapping three-way conflict. For every clean case, compare exact `(path bytes, mode, object OID)` tree-entry transformations from source-parent→source against target-base→result. Conflict cases must prove durable plan, `continue` determinism, `abort` restoration, and crash recovery before/after conflict materialization.
+
 ### VAL-CORE-002 — Sibling preservation hard gate
 
 **Surface:** CLI + Git graph.  
@@ -562,7 +563,7 @@ struct ValidationResult {
 **Command:** `cargo test --test git_passthrough -- --git "$GIT_UNDER_TEST" --cases all`.  
 **Behavior:** direct Git and transparent JJK route are identical for the D009 corpus.  
 **Evidence:** paired `CommandObservation`, repository digests, helper/hook recordings.  
-**Fail:** any argv/cwd/stdio/env/signal/exit/result delta outside the single documented recursion variable.
+**Fail:** any argv/cwd/stdio/environment/signal/exit/result delta. The harness seeds a value under JJK's internal recursion-guard name and requires byte/native-string-for-native-string preservation.
 
 ### VAL-RECOVERY-001 — Crash recovery hard gate
 

@@ -342,7 +342,7 @@ backup.jjkbak/
 └── legacy/                     # optional preserved migration capsule
 ```
 
-The SQLite file is produced with SQLite’s online backup API from one committed read snapshot. JJK's repository lock excludes JJK writers but cannot exclude native Git/JJ/IDE writers. Backup therefore records two independently observed cross-layer fingerprints around capture. If they differ, or any per-workspace pre/post fingerprint differs, the attempt is rejected and retried from a new plan; no artifact claims a single boundary. The implementation may stage immutable Git objects before the locked interval, but final verification must bind one stable observed boundary. `-wal` and `-shm` are absent from the artifact.
+The SQLite file is produced with SQLite’s online backup API from one committed read snapshot. JJK's repository lock excludes JJK writers but cannot exclude native Git/JJ/IDE writers. Backup therefore hashes every captured mutable payload as it is copied, then re-observes and re-hashes the corresponding live ref set, index bytes, tracked patch basis, untracked content, recovery artifact, and workspace control fact before accepting the manifest. Endpoint fingerprints are only a cheap drift gate; matching endpoints never prove consistency. Any payload/post-observation mismatch—including an A→B→A race—rejects the attempt. Where a filesystem cannot provide stable re-observation, backup requires operator-established quiescence or a proven filesystem snapshot and records that primitive. `-wal` and `-shm` are absent from the artifact.
 
 `git/objects.bundle` includes all OIDs reachable from captured ordinary refs, `refs/jjk/*`, operation recovery anchors, and states in the database. `git/refs.json` records symbolic HEAD, peeled refs, object format, remotes without credentials, and per-worktree HEAD/branch. Index and dirty files are separate because neither Git bundle nor metadata DB contains them.
 
@@ -391,7 +391,7 @@ struct ArtifactDigest {
 3. Resolve privacy policy and destination; default destination permissions are owner-only.
 4. Plan artifact list and estimated space; require free space ≥ `estimated_bytes * 1.2 + 64 MiB`.
 5. Commit `BackupCreate` operation as `prepared`.
-6. While holding the JJK lock, capture a pre-fingerprint, SQLite through the online backup API, refs, operation recovery artifacts, indexes, patches, and untracked content, then capture a post-fingerprint; reject the attempt if any covered fact drifted.
+6. While holding the JJK lock, capture a pre-fingerprint, SQLite through the online backup API, refs, operation recovery artifacts, indexes, patches, and untracked content with per-payload hashes; then re-observe and re-hash every mutable source and capture a post-fingerprint. Reject any mismatch, ABA/torn-read evidence, or unsupported stable-read primitive.
 7. Build Git bundle from an explicit temporary ref namespace; delete temporary refs only after the bundle verifies.
 8. Hash every artifact, write canonical manifest last, fsync all files and parent directory.
 9. Verify from the artifact, not the source: checksums, SQLite checks, projection replay sample/full policy, Git bundle, OID closure, safe paths, and clean extraction.
