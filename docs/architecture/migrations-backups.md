@@ -44,23 +44,25 @@ A backup is a disaster-recovery artifact. A freeze is a portable handoff/archive
 
 ## 3. Storage layout
 
+The canonical repository-wide control root is `<git-common-dir>/jjk/`, shared by every linked worktree. Per-worktree `.jjk/` is legacy input only; v0.1 must not create independent databases in worktree roots.
+
 ```text
-.jjk/
-├── store.db                    # journal + projections; canonical metadata
-├── store.db-wal                # transient; never copied directly
-├── store.db-shm                # transient; never copied directly
+<git-common-dir>/jjk/
+├── state.sqlite3               # journal + projections; canonical metadata
+├── state.sqlite3-wal           # transient; never copied directly
+├── state.sqlite3-shm           # transient; never copied directly
 ├── lock                        # repository operation lock; transient, excluded from artifacts
 ├── recovery/                   # durable operation plans, compensation data, staged restores
 ├── migrations/
 │   ├── legacy-v1/              # immutable source copies and import receipt
 │   └── receipts/               # one receipt per applied schema step
-├── backups/                    # default local destination, ignored by Git
+├── backups/                    # default local destination
 ├── freezes/                    # default local destination
 ├── sync/                       # fetched packs, cursors, quarantine
 └── quarantine/                 # corrupt/untrusted imports and removal staging
 ```
 
-`store.db` contains `PRAGMA user_version`, but schema identity is not represented by that integer alone.
+`state.sqlite3` contains `PRAGMA user_version`, but schema identity is not represented by that integer alone.
 
 ```rust
 struct SchemaIdentity {
@@ -97,7 +99,7 @@ Every descriptor is compiled into the binary. There is no runtime execution of S
 - **MB-I009 — exact Git proof:** every state that claims a Git object must resolve to that algorithm-tagged OID after import/restore. Missing objects quarantine the artifact; no placeholder state is silently made current.
 - **MB-I010 — privacy follows data:** transport and backup policy is based on field classification, not filename. Unknown future fields default to local-sensitive and are not synced.
 - **MB-I011 — forward preservation:** an older compatible binary may ignore an unknown event for display, but must preserve it byte-for-byte and must not rebuild/write projections it cannot understand.
-- **MB-I012 — no dual truth:** after cutover, `store.db` is canonical. Legacy JSON is read-only evidence. There is no permanent JSON/SQLite dual-write path.
+- **MB-I012 — no dual truth:** after cutover, `<git-common-dir>/jjk/state.sqlite3` is canonical. Legacy JSON is read-only evidence. There is no permanent JSON/SQLite dual-write path.
 
 ## 5. Canonical migration records
 
@@ -120,6 +122,32 @@ struct LegacyIdMap {
     source_sha256: [u8; 32],
     imported_by: OperationId,
 }
+struct JournalHead {
+    through_seq: u64,
+    through_event_hash: [u8; 32],
+}
+
+struct EventEnvelope {
+    event_id: EventId,
+    repo_id: RepositoryId,
+    local_seq: u64,
+    event_type: String,
+    event_schema_version: u16,
+    envelope_version: u16,
+    operation_id: OperationId,
+    operation_ordinal: u32,
+    actor: ActorRef,
+    recorded_at_utc: String,
+    observed_at_utc: Option<String>,
+    repository_fingerprint: [u8; 32],
+    payload_cbor: Vec<u8>,          // canonical CBOR
+    provenance: Vec<ProvenanceRef>,
+    evidence: Vec<EvidenceRef>,
+    dedup_key: String,
+    prev_event_hash: [u8; 32],
+    event_hash: [u8; 32],
+}
+
 
 struct MigrationReceipt {
     migration_id: String,
@@ -129,7 +157,7 @@ struct MigrationReceipt {
     committed_at_utc: String,
     binary_version: String,
     input_sha256: [u8; 32],
-    output_journal_head: EventId,
+    output_journal_head: JournalHead,
     row_counts: BTreeMap<String, u64>,
     verification_sha256: [u8; 32],
 }
@@ -155,7 +183,7 @@ Before import, JJK reconciles current Git refs/OIDs read-only and records the ob
 
 | Legacy source | Canonical destination | Rule |
 |---|---|---|
-| `version` | import provenance + `SchemaMigratedFromLegacyV1` | Must equal `1`; never copied as current schema version |
+| `version` | import provenance + `MigrationCompleted { source: "legacy-v1" }` | Must equal `1`; never copied as current schema version |
 | `safeSpaceId` | repository legacy alias | Preserved exactly; new `RepositoryId` allocated once |
 | `createdAt` | repository `created_at` | Parse RFC3339 preserving original text in provenance; invalid timestamp blocks import |
 | `updatedAt` | repository last-observed legacy timestamp | Not trusted as journal order; preserve original |
@@ -265,11 +293,11 @@ Every `FreezeRecord` field in `repo.json` is retained: `id`, `stateId`, `created
 3. **Reconcile read-only:** capture exact refs, HEAD/index/worktree status and outstanding operation evidence.
 4. **Resolve:** parse all legacy structures, construct `LegacyIdMap`, resolve second-pass edges, and produce a deterministic plan.
 5. **Plan:** print counts, warnings, repairs, bytes, required objects, privacy findings, and cutover/rollback paths. `--check` stops here.
-6. **Durable prepare:** create `.jjk/migrations/legacy-v1/<operation-id>/`, copy source bytes, fsync files and directory, create pre-migration full backup, and commit operation status `prepared` in the staged database.
+6. **Durable prepare:** create `<git-common-dir>/jjk/migrations/legacy-v1/<operation-id>/`, copy source bytes, fsync files and directory, create pre-migration full backup, commit operation status `prepared` in the staged database, and append `MigrationStarted` in the operation event sequence.
 7. **Build:** populate a new database at a recovery-staging path in one transaction; do not mutate Git or source files.
-8. **Verify:** run all checks in section 13, replay projections, compare row/edge/ref counts, and write a signed-by-checksum receipt.
-9. **Activate:** atomically rename the staged DB into place and atomically write a small format marker. No legacy file is renamed or deleted.
-10. **Commit:** append `SchemaMigratedFromLegacyV1`, mark the operation `committed`, fsync, unlock, and render the recovery command.
+8. **Verify:** run all checks in section 14, replay projections, compare row/edge/ref counts, and write a signed-by-checksum receipt.
+9. **Activate:** atomically rename the staged DB to `<git-common-dir>/jjk/state.sqlite3` and atomically write a small format marker. No legacy file is renamed or deleted.
+10. **Commit:** append `MigrationCompleted` (or `MigrationFailed` before abort/repair), mark the operation `committed`, fsync, unlock, and render the recovery command.
 
 Crash behavior is determined only by durable operation status: `prepared` discards/reuses staging; `applying|verifying` resumes verification; `repair_required` forbids ordinary mutation; `committed` makes retry a no-op. Re-running migration over unchanged input returns the original receipt. Changed legacy input after cutover is reported as drift and is never merged implicitly.
 
@@ -291,7 +319,7 @@ Failure transitions are:
 
 A migration transaction records affected schema objects, journal head before/after, backup ID, progress cursor, verifier output, and compensation procedure. SQL transaction rollback is sufficient only when no external effect occurred. Git/JJ/filesystem effects always require the durable operation protocol.
 
-Migrations are monotonic. JJK does not destructively down-migrate a live database. Application rollback is provided by the compatibility protocol in section 14.
+Migrations are monotonic. JJK does not destructively down-migrate a live database. Application rollback is provided by the compatibility protocol in section 15.
 
 ## 8. Backup format and creation
 
@@ -303,7 +331,7 @@ A backup is one immutable directory or deterministic archive (`.jjkbak`, tar+zst
 backup.jjkbak/
 ├── manifest.json
 ├── manifest.sha256
-├── metadata/store.db
+├── metadata/state.sqlite3
 ├── git/objects.bundle
 ├── git/refs.json
 ├── workspaces/control.json
@@ -321,6 +349,11 @@ The SQLite file is produced with SQLite’s online backup API from one committed
 ### 8.2 Manifest
 
 ```rust
+struct JournalHeadManifest {
+    through_seq: u64,
+    through_event_hash: String,     // lowercase hex of JournalHead hash bytes
+}
+
 struct BackupManifestV1 {
     format: String,                 // "jjk-backup"
     format_version: u16,            // 1
@@ -329,7 +362,7 @@ struct BackupManifestV1 {
     created_at_utc: String,
     created_by_version: String,
     schema: SchemaIdentity,
-    journal_head: String,
+    journal_head: JournalHeadManifest,
     operation_boundary: String,
     git_object_format: String,      // "sha1" or "sha256"
     privacy: PrivacyManifest,
@@ -369,6 +402,7 @@ A command is successful only after step 10. Output includes path, bytes, backup 
 ## 9. Load and restore
 
 `jjk backup load` means restore, not metadata merge.
+Restore event vocabulary is fixed: the durable plan appends `RestorePrepared`; successful cross-layer verification appends `RestoreApplied`; recovery that completes or compensates an interrupted restore appends `RestoreRepaired`. `BackupCreated` is appended only after destination-artifact verification. All four use the canonical `EventEnvelope`; names are not aliases for operation statuses.
 
 ### 9.1 Preview
 
@@ -431,7 +465,7 @@ Import verifies first, places Git refs under quarantine/import namespace, dedupl
 
 ## 11. Metadata synchronization
 
-**MB-005:** metadata sync exchanges immutable, shareable event packs; it does not copy `store.db` and does not elect one mutable `repo.json` as winner.
+**MB-005:** metadata sync exchanges immutable, shareable event packs; it does not copy `state.sqlite3` and does not elect one mutable `repo.json` as winner.
 
 Each replica owns one append-only remote stream under `refs/jjk/metadata/<repository-id>/<replica-id>`. A stream ref advances by compare-and-swap to a Git commit containing a canonical pack manifest and content-addressed event segments. Different replicas never force-update one another’s stream. Pull is union + validation + deterministic projection rebuild; duplicates are harmless through `(origin_replica_id, origin_event_id)` uniqueness.
 

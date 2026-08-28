@@ -206,6 +206,51 @@ All payloads include only IDs and immutable facts needed to replay. Mutable “c
 
 Kinds such as `save`, `step`, `nice`, `git`, `new`, `stash`, `cherry`, and `auto` are values in `StateCaptured.kind`. `star` is an annotation, not a second snapshot. A Git commit may back several semantic states; therefore `(repo_id, git_oid)` is intentionally not unique in `states`.
 
+## Data and API shapes
+
+The Rust core exposes typed commands and read models; callers never issue SQL or construct envelopes directly.
+
+```rust
+trait EventStore {
+    fn prepare(&mut self, request: PrepareOperation) -> Result<PreparedOperation, StoreError>;
+    fn append_lifecycle(
+        &mut self,
+        operation: OperationId,
+        expected_status: OperationStatus,
+        events: NonEmpty<LifecycleEvent>,
+    ) -> Result<OperationView, StoreError>;
+    fn commit_verified<D: DomainEvent>(
+        &mut self,
+        operation: OperationId,
+        verification: VerifiedEffects,
+        domain_events: NonEmpty<D>,
+        result: OperationResult,
+    ) -> Result<CommitReceipt, StoreError>;
+    fn query<Q: Query>(&self, query: Q, at: Consistency) -> Result<Q::Output, StoreError>;
+    fn replay(&mut self, target: ReplayTarget) -> Result<ReplayReceipt, StoreError>;
+}
+
+struct CommitReceipt {
+    operation_id: OperationId,
+    first_seq: u64,
+    last_seq: u64,
+    journal_head_hash: Hash256,
+    projection_digest: Hash256,
+}
+
+enum StoreError {
+    IdempotencyConflict { operation_id: OperationId },
+    InvalidTransition { operation_id: OperationId, from: OperationStatus, event: EventType },
+    EffectReceiptConflict { effect_id: EffectId },
+    ProjectionStale { projection: ProjectionName, through: u64, head: u64 },
+    ReaderTooOld { event_id: EventId, event_type: String, schema_version: u16 },
+    JournalCorrupt { first_bad_seq: u64, reason: CorruptionReason },
+    CausalDependencyMissing { event_id: EventId, cause_id: EventId },
+}
+```
+
+`VerifiedEffects` is constructible only by the verification subsystem after matching every planned `EffectId` receipt and final repository fingerprint. This type boundary makes it impossible for ordinary command code to call `commit_verified` on intent alone. `PrepareOperation` owns canonical request hashing; `commit_verified` appends domain facts and `OperationCommitted` and reduces committed projections inside one SQLite transaction.
+
 ## Payload examples
 
 Diagnostic JSON below is lossless in meaning but is encoded as canonical CBOR on disk.
@@ -729,7 +774,7 @@ Each check is a behavioral contract, not a source-text assertion.
 | EM-A014 Schema evolution | Open every released fixture; upcast and replay; inject an unknown future event. | Old fixtures produce current projections without rewriting events; future event stops at its sequence with `ReaderTooOld` and no partial write. |
 | EM-A015 Projection drift | Corrupt/delete projection rows while preserving events. | Current query refuses stale/digest-mismatched data, rebuilds, and returns the same result; journal hashes remain unchanged. |
 | EM-A016 Journal corruption | Flip a payload byte, remove a causal parent, truncate an artifact, and damage a WAL copy in separate throwaway fixtures. | Each is detected; source opens read-only; no row is skipped; recovery uses a verified copy/new generation or declares the exact unrecoverable gap. |
-| EM-A017 Cross-layer fault injection | Kill the process between every step of `discover → ... → commit/repair` for state capture, return, pick, archive, and promotion. | Re-entry deterministically commits, rolls back, or stops repair-required; no false success and no unowned external mutation remain. |
+| EM-A017 Cross-layer fault injection | Kill the process between every step of `discover → ... → commit/repair` for state capture, return, pick, archive, and promotion. | Re-entry deterministically commits, aborts, or stops `repair_required`; no false success and no unowned external mutation remain. |
 | EM-A018 Git-only removability | Remove `.jjk` from a completed fixture and use only Git to clone, inspect branches, diff, build, and continue. | Repository remains valid and understandable; JJK metadata was enrichment, never hostage infrastructure. |
 
 ## Explicit non-goals

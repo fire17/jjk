@@ -3,3 +3,4 @@ target/
 .jj/
 *.profraw
 .DS_Store
+.worktrees/
