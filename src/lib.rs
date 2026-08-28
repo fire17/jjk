@@ -1,4 +1,15 @@
+//! JJK reusable library.
+//! Domain modules are public so application layers share one semantic model.
+
 #![allow(dead_code)]
-mod ports;
+
+pub mod app;
+pub mod cli;
+pub mod domain;
+pub mod error;
+pub mod render;
+
 mod adapters;
-mod app;
+mod ports;
+
+pub use error::{DomainError, JjkError};
