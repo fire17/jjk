@@ -1482,6 +1482,7 @@ fn inventory(jjk_root: &Path) -> Result<Vec<SourceFile>, LegacyImportError> {
     let mut result = Vec::new();
     for path in paths {
         reject_non_regular_source(&path)?;
+        #[cfg(unix)]
         let metadata = fs::symlink_metadata(&path).map_err(|source| LegacyImportError::Read {
             path: path.clone(),
             source,

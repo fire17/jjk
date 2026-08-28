@@ -1,9 +1,14 @@
 //! Race-resistant filesystem publication below caller-selected destinations.
 
+#[cfg(unix)]
 use std::ffi::OsString;
 use std::fs::File;
-use std::io::{self, Read, Seek, SeekFrom};
-use std::path::{Component, Path, PathBuf};
+#[cfg(unix)]
+use std::io::Read;
+use std::io::{self, Seek, SeekFrom};
+#[cfg(unix)]
+use std::path::Component;
+use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
 use rustix::fd::OwnedFd;
@@ -401,6 +406,20 @@ pub(crate) struct SafeStagingFile {
 impl SafeStagingFile {
     pub(crate) fn file_mut(&mut self) -> &mut File {
         &mut self.file
+    }
+
+    pub(crate) fn verify_contents(&mut self, expected: &[u8]) -> io::Result<()> {
+        self.file.seek(SeekFrom::Start(0))?;
+        let mut actual = Vec::new();
+        self.file.read_to_end(&mut actual)?;
+        if actual == expected {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "staged file differs from verified backup bytes",
+            ))
+        }
     }
 }
 

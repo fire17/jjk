@@ -110,7 +110,9 @@ pub(crate) fn trim_line(mut bytes: Vec<u8>) -> Vec<u8> {
     bytes
 }
 
-pub(crate) fn native(bytes: Vec<u8>, _field: &'static str) -> Result<OsString, GitError> {
+pub(crate) fn native(bytes: Vec<u8>, field: &'static str) -> Result<OsString, GitError> {
+    #[cfg(unix)]
+    let _ = field;
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStringExt;

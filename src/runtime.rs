@@ -3339,6 +3339,8 @@ fn clear_worktree(root: &Path, directory: &Path) -> Result<(), RuntimeError> {
 fn restore_worktree_entry(root: &Path, entry: &RuntimeWorktreeEntry) -> Result<(), RuntimeError> {
     match entry {
         RuntimeWorktreeEntry::Regular { path, mode, bytes } => {
+            #[cfg(not(unix))]
+            let _ = mode;
             let target = root.join(os_string(path)?);
             if let Some(parent) = target.parent() {
                 fs::create_dir_all(parent).map_err(internal)?;
@@ -3352,6 +3354,8 @@ fn restore_worktree_entry(root: &Path, entry: &RuntimeWorktreeEntry) -> Result<(
             }
         }
         RuntimeWorktreeEntry::Symlink { path, target } => {
+            #[cfg(not(unix))]
+            let _ = target;
             let destination = root.join(os_string(path)?);
             if let Some(parent) = destination.parent() {
                 fs::create_dir_all(parent).map_err(internal)?;
