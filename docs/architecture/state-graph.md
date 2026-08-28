@@ -23,7 +23,7 @@ All mutations use:
 
 `discover → lock → reconcile → resolve → plan → durable prepare → mutate Git/JJ/files → append events+projections → verify → commit/repair`
 
-JJK-native commands (`return`, `fork`, `pick`) operate on this graph. Git-enhanced commands may join it with Git facts. Transparent Git passthrough creates no guessed JJK edges; reconciliation imports its observable effects.
+JJK-native commands such as `return`, `fork`, and `pick` operate on this graph. In v0.1, `status` is the only Git-enhanced spelling and may join graph facts with Git facts. Every unowned invocation—including `init` and unknown/free-form text—is transparent Git passthrough; it creates no guessed JJK edges, and later reconciliation imports its observable effects. Safe-space enrollment is `jjk setup`, while state descriptions use an owned capture form such as `jjk save -- <text>`.
 
 ## Decisions
 
@@ -157,11 +157,11 @@ Direct/fast-forward may point canonical branch at the source. Replay/projection 
 
 Archive never deletes topology, provenance, evidence, or reachability. It preserves identity and state/archive refs. Recovery closes an archive episode and restores the same ID; ref-name collision requires an alternate visible name. Current/writable workspace targets require safe relocation. Filtered views show hidden-ancestor markers and `filtered=true`, never fake roots. Hard deletion and GC are out of scope.
 
-### SG-D13 — SQLite WAL for local journal/projections
+### SG-D13 — One common-directory SQLite WAL control store
 
-SQLite WAL is retained over mutable JSON (whole-file writes/weak constraints), custom event files (reimplemented indexes/transactions), and a graph DB (unneeded operational surface). It gives strict tables, transactions, recursive CTEs, and fast concurrent readers.
+The canonical repository-wide control root is `<git-common-dir>/jjk/`; every linked worktree shares `<git-common-dir>/jjk/state.sqlite3`. Per-worktree `.jjk/` is legacy migration input only. SQLite WAL is retained over mutable JSON (whole-file writes/weak constraints), custom event files (reimplemented indexes/transactions), and a graph DB (unneeded operational surface). It gives strict tables, transactions, recursive CTEs, and fast concurrent readers.
 
-Limits are explicit: safe-space lock remains mandatory across Git/JJ/files; events and projections update in one transaction after durable prepare; `synchronous=FULL` protects prepare/commit; a hash-chained journal export prevents DB-only recovery. Unsupported/network filesystems explicitly use rollback-journal single-writer mode or refuse concurrent mutation. Live WAL is never metadata transport.
+The safe-space lock remains mandatory across Git/JJ/files; events and projections update in one transaction after durable prepare; `synchronous=FULL` protects prepare/commit; a hash-chained journal export prevents database-only recovery. WAL is enabled only after locking, shared-memory, and durability probes succeed on the actual control directory. If they fail, v0.1 fails semantic mutation with `JJK-E-STORAGE-UNSAFE`; it does **not** silently select a weaker journal mode. Transparent Git passthrough and proven read-only inspection remain available. Runtime `state.sqlite3-wal`/`state.sqlite3-shm` are never copied or used as metadata transport.
 
 ## Entity schemas
 
@@ -190,7 +190,7 @@ struct StateLabel {
 }
 ```
 
-`star`, `pin`, approval, rejection, notes, and tags are annotations, not snapshot kinds. Clean star/nice creates no empty state. Every state verifies `commit.tree == git_tree` and has a state ref or equivalent reachability proof.
+`star`, `pin`, approval, rejection, notes, and tags are modeled as annotations rather than snapshot kinds so later capability can extend the graph without schema distortion. They are not v0.1 stable command-registry promises: `star`/`unstar` remain unowned until implemented and registered. A clean annotation creates no empty state. Every state verifies `commit.tree == git_tree` and has a state ref or equivalent reachability proof.
 
 ```rust
 struct Attempt {
@@ -534,7 +534,7 @@ For “best combination of purple and orange,” one `cmp_X` freezes inputs P/O 
 | archived hidden ancestor | hidden marker + filtered=true |
 | current target archived | reject or require safe relocation |
 | crash between layers | prepared operation deterministically completes/rolls back |
-| unsupported WAL filesystem | explicit single-writer fallback or refusal |
+| unsafe/unsupported WAL durability | refuse semantic mutation with `JJK-E-STORAGE-UNSAFE`; retain transparent Git and proven read-only inspection |
 | navigation revisit | allowed only in navigation; excluded from ancestry cycles |
 
 ## Acceptance checks
@@ -568,7 +568,7 @@ For “best combination of purple and orange,” one `cmp_X` freezes inputs P/O 
 - **SG-A27:** SHA-1/SHA-256 fixtures behave identically with domain separation.
 - **SG-A28:** paginated/filtered reads stay pinned to snapshot token and report boundaries.
 - **SG-A29:** transparent-Git commits/ref changes reconcile correctly and idempotently.
-- **SG-A30:** WAL works locally; unsupported filesystem safely falls back/refuses.
+- **SG-A30:** WAL works only after control-directory locking/shared-memory/durability probes; a failed probe rejects semantic mutation without creating or modifying semantic state.
 
 ## Explicit non-goals
 
@@ -581,10 +581,16 @@ For “best combination of purple and orange,” one `cmp_X` freezes inputs P/O 
 - Silent repository merge-driver/hook/filter authority for v0.1 atomic pick.
 - Hard deletion, Git object pruning, or GC policy in v0.1.
 - Cross-host live SQLite replication or WAL transport.
-- Full terminal/editor/process/conversation restoration; Timeshift owns it.
+- Full terminal/editor/process/conversation restoration; a future Timeshift capability owns it, but Timeshift is not in the v0.1 stable registry.
 - AI functional regrouping of mixed commits in v0.1 core.
 - Final CLI routing syntax or graph visual/color design.
 - Replacing Git or requiring JJ for correctness.
+
+- Shipping `star`, `unstar`, `promote`, or Timeshift as v0.1 stable commands; their graph entities are forward-compatible architecture, not implementation claims.
+
+## Surface contract
+
+Graph reads exposed by a registered command use the common machine envelope selected by `--format json`; `--json` is its compatibility alias. Human output and canonical JSON are projections of the same snapshot token and must agree on IDs, topology, filtering, boundaries, and verification status. The graph model does not create an implicit free-form command route: only the compiled ownership registry can expose a graph operation.
 
 ## Implementation boundary
 
