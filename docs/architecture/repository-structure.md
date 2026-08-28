@@ -316,7 +316,7 @@ Routing happens before expensive bootstrap:
 1. Inspect native `OsString` arguments without opening SQLite or probing JJ.
 2. Classify the command as **JJK-native**, **Git-enhanced**, or **transparent Git passthrough**.
 3. Transparent passthrough preserves argv bytes/native strings, cwd, environment, stdin/stdout/stderr, terminal behavior, signals, and exit code. Never lossily convert arguments or capture/reformat normal Git output.
-4. Use process replacement where post-reconciliation is unnecessary; otherwise supervise the child with inherited stdio and signal forwarding, returning the exact exit status.
+4. On Unix, transparent passthrough uses process replacement. On platforms without equivalent exec semantics, a minimal supervisor forwards supported control events and returns Git's exact process result; it performs no reconciliation or JJK output.
 5. Read-only JJK commands lazily open only projections and required Git observations.
 6. Mutation commands instantiate only adapters named by the plan.
 
