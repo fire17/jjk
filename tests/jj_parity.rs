@@ -40,7 +40,6 @@ impl Sandbox {
         fs::create_dir_all(&bin).expect("create tool directory");
         fs::create_dir_all(&home).expect("create isolated home");
         fs::create_dir_all(&xdg).expect("create isolated XDG root");
-        #[cfg(unix)]
         install_tool(git, &bin.join(tool_file_name("git")));
         if let Some(jj) = jj {
             install_tool(jj, &bin.join(tool_file_name("jj")));
