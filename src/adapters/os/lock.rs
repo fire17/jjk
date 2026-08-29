@@ -78,11 +78,14 @@ impl WriterLock for OsWriterLock {
                 }
                 Err(error) if lock_contended(&error) => {
                     let mut owner = String::new();
-                    file.seek(SeekFrom::Start(0))?;
-                    file.read_to_string(&mut owner)?;
+                    let known_owner = file
+                        .seek(SeekFrom::Start(0))
+                        .and_then(|_| file.read_to_string(&mut owner))
+                        .is_ok()
+                        && !owner.is_empty();
                     return Err(LockError::Busy {
                         path: self.path.clone(),
-                        owner: (!owner.is_empty()).then_some(owner),
+                        owner: known_owner.then_some(owner),
                     });
                 }
                 Err(error) => return Err(error.into()),
