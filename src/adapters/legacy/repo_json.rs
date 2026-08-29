@@ -1823,6 +1823,7 @@ fn sync_tree(root: &Path, files: &[SourceFile]) -> Result<(), LegacyImportError>
     Ok(())
 }
 
+#[cfg(unix)]
 fn sync_directory(path: &Path) -> Result<(), LegacyImportError> {
     OpenOptions::new()
         .read(true)
@@ -1832,6 +1833,11 @@ fn sync_directory(path: &Path) -> Result<(), LegacyImportError> {
             path: path.to_owned(),
             source,
         })
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path) -> Result<(), LegacyImportError> {
+    Ok(())
 }
 
 fn staging_path(destination: &Path) -> PathBuf {
