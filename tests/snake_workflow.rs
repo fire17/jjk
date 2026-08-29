@@ -819,7 +819,7 @@ fn stable_patch_id(root: &Path, from: &str, to: &str) -> String {
         .expect("spawn git patch-id");
     child
         .stdin
-        .as_mut()
+        .take()
         .expect("patch-id stdin")
         .write_all(&patch)
         .expect("send exact patch");
