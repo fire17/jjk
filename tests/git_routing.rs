@@ -137,8 +137,12 @@ fn broken_jj_degrades_without_affecting_git() {
     };
     #[cfg(windows)]
     let shim = {
-        let shim = fixture.path().join("jj-broken.cmd");
-        fs::write(&shim, "@echo off\r\nif \"%1\"==\"--version\" (echo jj 99.0& exit /b 0)\r\necho broken operation log 1>&2\r\nexit /b 42\r\n").unwrap();
+        let shim = fixture.path().join("jj-broken.exe");
+        fs::copy(
+            std::env::current_exe().expect("current test executable"),
+            &shim,
+        )
+        .unwrap();
         shim
     };
     let result = probe(&OsProcess, &shim, fixture.path());
