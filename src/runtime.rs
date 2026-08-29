@@ -3055,7 +3055,12 @@ fn context(cwd: &Path) -> Result<RuntimeContext, RuntimeError> {
     workspace_seed.push(0);
     workspace_seed.extend(&relative_locator);
     let derived_workspace_id = deterministic_v7_uuid(&workspace_seed);
-    let workspace_id = if store
+    let workspace_id = if let Some(id) = store
+        .workspace_id_for_locator(&relative_locator)
+        .map_err(internal)?
+    {
+        id
+    } else if store
         .current_state_row(derived_workspace_id)
         .map_err(internal)?
         .is_some()

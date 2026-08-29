@@ -569,6 +569,26 @@ impl SqliteStore {
             StoreError::InvalidData(format!("invalid workspace id: {error}"))
         })?))
     }
+    pub(crate) fn workspace_id_for_locator(
+        &self,
+        relative_locator: &[u8],
+    ) -> Result<Option<Uuid>, StoreError> {
+        let workspace: Option<Vec<u8>> = self
+            .connection
+            .query_row(
+                "SELECT worktree_id FROM worktree_current WHERE relative_locator = ?1",
+                params![relative_locator],
+                |row| row.get(0),
+            )
+            .optional()?;
+        workspace
+            .map(|bytes| {
+                Uuid::from_slice(&bytes).map_err(|error| {
+                    StoreError::InvalidData(format!("invalid workspace id: {error}"))
+                })
+            })
+            .transpose()
+    }
     pub(crate) fn current_state_row(
         &self,
         workspace_id: Uuid,
