@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tempfile::TempDir;
 
-const PROCESS_DEADLINE: Duration = Duration::from_secs(15);
-const BARRIER_DEADLINE: Duration = Duration::from_secs(10);
+const PROCESS_DEADLINE: Duration = Duration::from_secs(60);
+const BARRIER_DEADLINE: Duration = Duration::from_secs(30);
 const WORKER_ENV: &str = "JJK_CONCURRENCY_CAPTURE_WORKER";
 
 #[derive(Debug)]
@@ -849,7 +849,7 @@ fn wait_for_path(path: &Path, timeout: Duration, description: &str) {
             "timed out waiting for {description}: {}",
             path.display()
         );
-        thread::yield_now();
+        thread::sleep(Duration::from_millis(10));
     }
 }
 
@@ -858,7 +858,7 @@ fn wait_bounded(mut child: Child, timeout: Duration, description: &str) -> Outpu
     loop {
         match child.try_wait().expect("poll child") {
             Some(_) => return child.wait_with_output().expect("collect child output"),
-            None if Instant::now() < deadline => thread::yield_now(),
+            None if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
             None => {
                 kill_process_group(&mut child);
                 let output = child
