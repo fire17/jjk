@@ -98,5 +98,33 @@ fn path(bytes: &[u8], field: &'static str) -> Result<PathBuf, GitError> {
 }
 
 fn canonical_path(bytes: &[u8], field: &'static str) -> Result<PathBuf, GitError> {
-    fs::canonicalize(path(bytes, field)?).map_err(GitError::Io)
+    fs::canonicalize(path(bytes, field)?)
+        .map(git_compatible_path)
+        .map_err(GitError::Io)
+}
+
+#[cfg(not(windows))]
+fn git_compatible_path(path: PathBuf) -> PathBuf {
+    path
+}
+
+#[cfg(windows)]
+fn git_compatible_path(path: PathBuf) -> PathBuf {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+    let wide = path.as_os_str().encode_wide().collect::<Vec<_>>();
+    const VERBATIM: &[u16] = &[b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+    const UNC: &[u16] = &[b'U' as u16, b'N' as u16, b'C' as u16, b'\\' as u16];
+    let Some(without_verbatim) = wide.strip_prefix(VERBATIM) else {
+        return path;
+    };
+    let compatible = if let Some(network_path) = without_verbatim.strip_prefix(UNC) {
+        let mut result = vec![b'\\' as u16, b'\\' as u16];
+        result.extend_from_slice(network_path);
+        result
+    } else {
+        without_verbatim.to_vec()
+    };
+    PathBuf::from(OsString::from_wide(&compatible))
 }
