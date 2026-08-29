@@ -3026,8 +3026,9 @@ fn fact_commit(
 
 fn workspace_locator(worktree_root: &Path, common_dir: &Path) -> Vec<u8> {
     let locator = worktree_root
-        .strip_prefix(common_dir)
-        .unwrap_or(worktree_root);
+        .components()
+        .skip(common_dir.components().count())
+        .collect::<PathBuf>();
     #[cfg(windows)]
     let locator = locator.to_string_lossy().replace('\\', "/").to_lowercase();
     #[cfg(windows)]
