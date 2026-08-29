@@ -878,7 +878,7 @@ fn kill_process_group(child: &mut Child) {
     {
         let group = format!("-{}", child.id());
         let killed = Command::new("/bin/kill")
-            .args(["-KILL", &group])
+            .args(["-KILL", "--", &group])
             .status()
             .expect("kill child process group");
         assert!(
