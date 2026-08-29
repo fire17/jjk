@@ -6,6 +6,16 @@ This project follows semantic versioning.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-29
+
+### Fixed
+
+- Eliminated the Linux executable-publication race in the Git passthrough conformance fixture.
+- Corrected SQLite current-state hydration and backup-load verification at the restored target.
+- Aligned the declared MSRV, CI, and release toolchains on Rust 1.85.0.
+- Hardened installer version parsing and corrected archive-root handling in the Homebrew formula.
+
+
 ## [0.1.1] - 2026-08-29
 
 ### Fixed

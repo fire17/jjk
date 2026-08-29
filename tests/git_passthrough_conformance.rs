@@ -379,8 +379,9 @@ fn install_recording_shim(root: &Path) -> PathBuf {
     let bin = root.join("shim-bin");
     fs::create_dir(&bin).expect("create shim directory");
     let shim = bin.join("git");
+    let staging = bin.join(format!(".git-{}.tmp", std::process::id()));
     fs::write(
-        &shim,
+        &staging,
         br#"#!/bin/sh
 : "${JJK_RECORD_ARGS:?}"
 : "${JJK_RECORD_CWD:?}"
@@ -399,12 +400,13 @@ printf 'shim stderr \002 end' >&2
 exit "${JJK_SHIM_EXIT-0}"
 "#,
     )
-    .expect("write recording Git shim");
-    let mut permissions = fs::metadata(&shim)
-        .expect("stat recording Git shim")
+    .expect("write recording Git shim staging file");
+    let mut permissions = fs::metadata(&staging)
+        .expect("stat recording Git shim staging file")
         .permissions();
     permissions.set_mode(0o755);
-    fs::set_permissions(&shim, permissions).expect("make recording Git shim executable");
+    fs::set_permissions(&staging, permissions).expect("make recording Git shim executable");
+    fs::rename(&staging, &shim).expect("publish complete recording Git shim");
     shim
 }
 

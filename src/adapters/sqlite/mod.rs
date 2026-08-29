@@ -607,19 +607,31 @@ impl SqliteStore {
         &self,
         workspace_id: Uuid,
     ) -> Result<Option<RuntimeStateRow>, StoreError> {
-        let active: Option<Vec<u8>> = self
-            .connection
+        self.connection
             .query_row(
-                "SELECT active_state_id FROM worktree_current WHERE worktree_id = ?1",
+                "SELECT hex(s.state_id), s.git_oid, s.kind, s.label, COALESCE(s.message, ''), \
+                        hex(s.attempt_id), NULLIF(hex(p.parent_state_id), ''), s.created_seq, s.archived \
+                 FROM worktree_current w \
+                 JOIN states s ON s.state_id = w.active_state_id \
+                 LEFT JOIN state_logical_parents p ON p.child_state_id = s.state_id \
+                 WHERE w.worktree_id = ?1",
                 params![workspace_id.as_bytes()],
-                |row| row.get(0),
+                |row| {
+                    Ok(RuntimeStateRow {
+                        state_id: row.get(0)?,
+                        git_oid: row.get(1)?,
+                        kind: row.get(2)?,
+                        label: row.get(3)?,
+                        message: row.get(4)?,
+                        attempt_id: row.get(5)?,
+                        logical_parent: row.get(6)?,
+                        created_seq: row.get(7)?,
+                        archived: row.get::<_, i64>(8)? != 0,
+                    })
+                },
             )
-            .optional()?;
-        let rows = self.state_rows()?;
-        Ok(active
-            .and_then(|bytes| Uuid::from_slice(&bytes).ok())
-            .map(|id| hex::encode_upper(id.as_bytes()))
-            .and_then(|id| rows.iter().find(|row| row.state_id == id).cloned()))
+            .optional()
+            .map_err(StoreError::from)
     }
     pub(crate) fn current_attempt_id(
         &self,
@@ -1928,6 +1940,60 @@ mod tests {
             previous_event_hash: head.event_hash,
             event_hash,
         }
+    }
+    #[test]
+    fn current_orientation_reads_are_bounded_with_large_history() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let (_directory, mut store, repo_id) = store();
+        let workspace_id = Uuid::now_v7();
+        let attempt_id = Uuid::now_v7();
+        let mut parent = None;
+        for index in 0..1_000_u64 {
+            let head = Journal::head(&store).expect("journal head");
+            let operation_id = Uuid::now_v7();
+            let state_id = Uuid::now_v7();
+            let state = RuntimeStateInsert {
+                state_id,
+                attempt_id,
+                logical_parent: parent,
+                workspace_id,
+                git_algorithm: "sha1".into(),
+                git_oid: format!("{index:040x}"),
+                head_oid: Some(format!("{index:040x}")),
+                kind: "checkpoint".into(),
+                label: format!("state-{index}"),
+                message: None,
+                relative_locator: Vec::new(),
+            };
+            store
+                .append_runtime_state(&event(repo_id, operation_id, 0, head), &state)
+                .expect("append state");
+            parent = Some(state_id);
+        }
+
+        let vm_steps = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&vm_steps);
+        store.connection.progress_handler(
+            1,
+            Some(move || {
+                count.fetch_add(1, Ordering::Relaxed);
+                false
+            }),
+        );
+        let current = store
+            .current_state_row(workspace_id)
+            .expect("read current state")
+            .expect("current state");
+        store.connection.progress_handler(0, None::<fn() -> bool>);
+
+        assert_eq!(current.git_oid, format!("{:040x}", 999));
+        let steps = vm_steps.load(Ordering::Relaxed);
+        assert!(
+            steps < 200,
+            "current-state lookup used {steps} SQLite VM steps for 1,000 states"
+        );
     }
     #[test]
     fn online_backup_contract_reports_verified_boundary() {

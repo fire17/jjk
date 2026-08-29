@@ -212,6 +212,16 @@ pub(crate) fn verify_backup_artifact(
     store: &dyn BackupStore,
     git: &dyn GitBundleVerifier,
 ) -> Result<BackupVerification, BackupError> {
+    verify_backup_artifact_with(root, store, |bundle, required_oids| {
+        git.verify_bundle(bundle, required_oids)
+    })
+}
+
+fn verify_backup_artifact_with(
+    root: &Path,
+    store: &dyn BackupStore,
+    verify_bundle: impl FnOnce(&Path, &[String]) -> Result<GitBundleVerification, String>,
+) -> Result<BackupVerification, BackupError> {
     let (manifest_bytes, manifest_sha256) = verified_manifest_bytes(root)?;
     let manifest: BackupManifestV1 = serde_json::from_slice(&manifest_bytes)
         .map_err(|error| BackupError::Invalid(format!("manifest JSON: {error}")))?;
@@ -236,7 +246,7 @@ pub(crate) fn verify_backup_artifact(
         ));
     }
     require_closure(
-        git.verify_bundle(&root.join("git/objects.bundle"), &manifest.required_oids)
+        verify_bundle(&root.join("git/objects.bundle"), &manifest.required_oids)
             .map_err(BackupError::Git)?,
     )?;
     let total_bytes = manifest_bytes.len() as u64
@@ -289,7 +299,9 @@ pub(crate) fn load_into_new_target(
     if preview.target.exists() {
         return Err(BackupError::ExistingTarget(preview.target.clone()));
     }
-    let verified = verify_backup_artifact(artifact, store, git)?;
+    let verified = verify_backup_artifact_with(artifact, store, |bundle, required_oids| {
+        git.verify_bundle(bundle, required_oids)
+    })?;
     if verified.manifest_sha256 != preview.manifest_sha256 || verified.manifest != preview.manifest
     {
         return Err(BackupError::PreviewChanged);

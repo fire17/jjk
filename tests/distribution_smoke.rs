@@ -334,6 +334,47 @@ fn installer_and_release_workflow_share_one_archive_contract() {
     );
 }
 
+#[test]
+fn installer_rejects_non_release_tag_suffixes_before_network_access() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let installer = root.join("scripts/install.sh");
+    for invalid in [
+        "v0.1.1-stable",
+        "v1.2.3.4",
+        "v1.2",
+        "1.2.3",
+        "v1.2.3rc1",
+        "v1..3",
+    ] {
+        let output = Command::new("sh")
+            .arg(&installer)
+            .env("JJK_VERSION", invalid)
+            .env("PATH", "/usr/bin:/bin")
+            .output()
+            .expect("run installer validation");
+        assert!(
+            !output.status.success(),
+            "installer accepted non-release tag {invalid}"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("vMAJOR.MINOR.PATCH"),
+            "installer emitted an unrelated failure for {invalid}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn homebrew_formula_installs_binary_from_release_archive_root() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let formula = fs::read_to_string(root.join("packaging/homebrew/jjk.rb.template"))
+        .expect("read Homebrew formula template");
+    assert!(
+        formula.contains("bin.install Dir[\"jjk-v#{version}-*/jjk\"].fetch(0)"),
+        "Homebrew must install the binary inside the versioned release archive root"
+    );
+}
+
 fn help_command_rows(help: &str) -> Vec<(String, String)> {
     let mut lines = help.lines();
     assert!(

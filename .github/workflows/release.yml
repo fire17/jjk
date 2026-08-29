@@ -16,6 +16,9 @@ permissions:
   id-token: write
   attestations: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 env:
   CARGO_TERM_COLOR: always
 
@@ -23,6 +26,7 @@ jobs:
   validate:
     name: Validate release identity
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     outputs:
       tag: ${{ steps.identity.outputs.tag }}
       version: ${{ steps.identity.outputs.version }}
@@ -72,7 +76,7 @@ jobs:
             asset: linux-arm64
             binary: jjk
             archive: tar.gz
-          - os: macos-13
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             asset: darwin-x64
             binary: jjk
@@ -88,6 +92,7 @@ jobs:
             binary: jjk.exe
             archive: zip
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -130,6 +135,7 @@ jobs:
     name: Checksums, provenance, and GitHub Release
     needs: [validate, build]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:

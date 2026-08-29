@@ -1,6 +1,6 @@
 [package]
 name = "jjk"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.85"
 description = "State-first development for humans and agents"
@@ -45,7 +45,7 @@ clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
 fs2 = "0.4"
 hex = "0.4"
 libc = "0.2"
-rusqlite = { version = "0.37", default-features = false, features = ["backup", "modern_sqlite", "serialize", "uuid"] }
+rusqlite = { version = "0.37", default-features = false, features = ["backup", "hooks", "modern_sqlite", "serialize", "uuid"] }
 rustix = { version = "1.1", default-features = false, features = ["std", "fs"] }
 schemars = { version = "1.0", features = ["uuid1"] }
 serde = { version = "1.0", features = ["derive"] }

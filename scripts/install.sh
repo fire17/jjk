@@ -39,9 +39,13 @@ if [ -z "$version" ]; then
         sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' |
         head -n 1)
 fi
-case "$version" in
-    v[0-9]*.[0-9]*.[0-9]*) ;;
+numeric_version=${version#v}
+case "$version:$numeric_version" in
+    v[0-9]*.[0-9]*.[0-9]*:[0-9]*.[0-9]*.[0-9]*) ;;
     *) printf 'jjk installer: expected JJK_VERSION=vMAJOR.MINOR.PATCH, got %s\n' "$version" >&2; exit 1 ;;
+esac
+case "$numeric_version" in
+    *[!0-9.]*|*.*.*.*|.*|*.|*..*) printf 'jjk installer: expected JJK_VERSION=vMAJOR.MINOR.PATCH, got %s\n' "$version" >&2; exit 1 ;;
 esac
 
 case "$(uname -s)" in

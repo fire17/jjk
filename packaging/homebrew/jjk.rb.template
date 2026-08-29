@@ -27,7 +27,7 @@ class Jjk < Formula
   depends_on "git"
 
   def install
-    bin.install Dir["jjk-v#{version}-*/jjk"].first
+    bin.install Dir["jjk-v#{version}-*/jjk"].fetch(0)
   end
 
   test do
