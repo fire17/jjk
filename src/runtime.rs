@@ -3029,7 +3029,7 @@ fn workspace_locator(worktree_root: &Path, common_dir: &Path) -> Vec<u8> {
         .strip_prefix(common_dir)
         .unwrap_or(worktree_root);
     #[cfg(windows)]
-    let locator = locator.to_string_lossy().replace('\\', "/");
+    let locator = locator.to_string_lossy().replace('\\', "/").to_lowercase();
     #[cfg(windows)]
     return locator.into_bytes();
     #[cfg(not(windows))]
@@ -3598,7 +3598,11 @@ fn repository_root_token_for_future(common_dir: &Path) -> Result<Vec<u8>, Runtim
 fn repository_root_token(common_dir: &Path) -> Result<Vec<u8>, RuntimeError> {
     let canonical = fs::canonicalize(common_dir).map_err(internal)?;
     #[cfg(windows)]
-    let canonical_bytes = canonical.to_string_lossy().replace('\\', "/").into_bytes();
+    let canonical_bytes = canonical
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_lowercase()
+        .into_bytes();
     #[cfg(not(windows))]
     let canonical_bytes = canonical.as_os_str().as_encoded_bytes().to_vec();
     let mut bytes = b"jjk-safe-space-v1\0".to_vec();
