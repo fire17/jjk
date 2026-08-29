@@ -1223,9 +1223,13 @@ fn fork(args: &[OsString], cwd: &Path) -> Result<i32, RuntimeError> {
             .as_ref()
             .map(|path| serde_json::json!({"branch":branch,"worktree":path,"pre_ref":"absent"})),
     )?;
-    let fork_locator = worktree_path
-        .as_ref()
-        .map(|path| path.as_os_str().as_encoded_bytes().to_vec());
+    let fork_locator = worktree_path.as_ref().map(|path| {
+        path.strip_prefix(&common_dir)
+            .unwrap_or(path)
+            .as_os_str()
+            .as_encoded_bytes()
+            .to_vec()
+    });
     let fork_workspace_id = fork_locator.as_ref().map(|locator| {
         let mut seed = b"jjk-workspace-v1\0".to_vec();
         seed.extend(&context.root_token);
