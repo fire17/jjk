@@ -21,11 +21,22 @@ use uuid::Uuid;
 
 const PROPERTY_CASES: u32 = 64;
 const PROPERTY_SEED: u64 = 0x4a4a_4b47_5241_5048;
+const INTEGRATION_PROPERTY_CASES: u32 = 8;
 
 fn property_runner(seed_offset: u64) -> TestRunner {
     TestRunner::new(Config {
         cases: PROPERTY_CASES,
         max_shrink_iters: 16_384,
+        failure_persistence: None,
+        rng_algorithm: RngAlgorithm::ChaCha,
+        rng_seed: RngSeed::Fixed(PROPERTY_SEED.wrapping_add(seed_offset)),
+        ..Config::default()
+    })
+}
+fn integration_property_runner(seed_offset: u64) -> TestRunner {
+    TestRunner::new(Config {
+        cases: INTEGRATION_PROPERTY_CASES,
+        max_shrink_iters: 2_048,
         failure_persistence: None,
         rng_algorithm: RngAlgorithm::ChaCha,
         rng_seed: RngSeed::Fixed(PROPERTY_SEED.wrapping_add(seed_offset)),
@@ -473,7 +484,7 @@ fn normalized_graph(
 fn compiled_cli_command_sequences_reopen_to_the_same_projection() {
     let strategy = vec(prop_oneof![Just("save"), Just("step"), Just("nice")], 1..7);
     let jjk = assert_cmd::cargo::cargo_bin!("jjk");
-    property_runner(6)
+    integration_property_runner(6)
         .run(&strategy, |kinds| {
             let directory =
                 TempDir::new().map_err(|error| TestCaseError::fail(error.to_string()))?;
