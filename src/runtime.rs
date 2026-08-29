@@ -1223,13 +1223,9 @@ fn fork(args: &[OsString], cwd: &Path) -> Result<i32, RuntimeError> {
             .as_ref()
             .map(|path| serde_json::json!({"branch":branch,"worktree":path,"pre_ref":"absent"})),
     )?;
-    let fork_locator = worktree_path.as_ref().map(|path| {
-        path.strip_prefix(&common_dir)
-            .unwrap_or(path)
-            .as_os_str()
-            .as_encoded_bytes()
-            .to_vec()
-    });
+    let fork_locator = worktree_path
+        .as_ref()
+        .map(|path| workspace_locator(path, &common_dir));
     let fork_workspace_id = fork_locator.as_ref().map(|locator| {
         let mut seed = b"jjk-workspace-v1\0".to_vec();
         seed.extend(&context.root_token);
@@ -3028,6 +3024,18 @@ fn fact_commit(
     }
 }
 
+fn workspace_locator(worktree_root: &Path, common_dir: &Path) -> Vec<u8> {
+    let locator = worktree_root
+        .strip_prefix(common_dir)
+        .unwrap_or(worktree_root);
+    #[cfg(windows)]
+    let locator = locator.to_string_lossy().replace('\\', "/");
+    #[cfg(windows)]
+    return locator.into_bytes();
+    #[cfg(not(windows))]
+    locator.as_os_str().as_encoded_bytes().to_vec()
+}
+
 fn context(cwd: &Path) -> Result<RuntimeContext, RuntimeError> {
     let git = GitCli::new("git", OsProcess);
     let discovery = git.discover(cwd).map_err(git_error)?;
@@ -3038,14 +3046,10 @@ fn context(cwd: &Path) -> Result<RuntimeContext, RuntimeError> {
         StoreOpenOptions::default(),
     )
     .map_err(internal)?;
-    let relative_locator = discovery
-        .worktree_root
-        .as_ref()
-        .and_then(|root| root.strip_prefix(&discovery.common_dir).ok())
-        .unwrap_or_else(|| discovery.worktree_root.as_deref().unwrap_or(cwd))
-        .as_os_str()
-        .as_encoded_bytes()
-        .to_vec();
+    let relative_locator = workspace_locator(
+        discovery.worktree_root.as_deref().unwrap_or(cwd),
+        &discovery.common_dir,
+    );
     let mut workspace_seed = b"jjk-workspace-v1\0".to_vec();
     workspace_seed.extend(&root_token);
     workspace_seed.push(0);
