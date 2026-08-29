@@ -23,6 +23,10 @@ fn successful(cwd: &std::path::Path, program: &std::path::Path, args: &[&str]) -
     output
 }
 
+fn disable_line_ending_conversion(cwd: &std::path::Path, git: &std::path::Path) {
+    successful(cwd, git, &["config", "core.autocrlf", "false"]);
+}
+
 fn json(output: &Output) -> Value {
     serde_json::from_slice(&output.stdout).expect("JSON output")
 }
@@ -35,6 +39,7 @@ fn canonical_state_engine_captures_graph_and_restores_content() {
     let jjk = assert_cmd::cargo::cargo_bin!("jjk");
 
     successful(root, git, &["init", "-q", "-b", "main"]);
+    disable_line_ending_conversion(root, git);
     fs::write(root.join("story.txt"), "one\n").expect("write fixture");
     successful(root, git, &["add", "story.txt"]);
     successful(
@@ -104,6 +109,7 @@ fn graph_navigation_fork_and_visibility_are_durable() {
     let jjk = assert_cmd::cargo::cargo_bin!("jjk");
 
     successful(root, git, &["init", "-q", "-b", "main"]);
+    disable_line_ending_conversion(root, git);
     fs::write(root.join("story.txt"), "base\n").expect("write fixture");
     successful(root, git, &["add", "story.txt"]);
     successful(
@@ -198,6 +204,7 @@ fn human_output_is_readable_while_json_remains_machine_stable() {
     let jjk = assert_cmd::cargo::cargo_bin!("jjk");
 
     successful(root, git, &["init", "-q", "-b", "main"]);
+    disable_line_ending_conversion(root, git);
     fs::write(root.join("story.txt"), "one\n").expect("write fixture");
     successful(root, git, &["add", "story.txt"]);
     successful(
@@ -244,6 +251,7 @@ fn worktree_fork_is_isolated_and_shares_repository_state() {
     let jjk = assert_cmd::cargo::cargo_bin!("jjk");
 
     successful(root, git, &["init", "-q", "-b", "main"]);
+    disable_line_ending_conversion(root, git);
     fs::write(root.join("story.txt"), "base\n").expect("write fixture");
     successful(root, git, &["add", "story.txt"]);
     successful(
@@ -393,6 +401,7 @@ fn destructive_navigation_refuses_unrepresented_workspace_changes() {
     let git = std::path::Path::new("git");
     let jjk = assert_cmd::cargo::cargo_bin!("jjk");
     successful(root, git, &["init", "-q", "-b", "main"]);
+    disable_line_ending_conversion(root, git);
     fs::write(root.join("story.txt"), "base\n").expect("write fixture");
     successful(root, git, &["add", "story.txt"]);
     successful(
