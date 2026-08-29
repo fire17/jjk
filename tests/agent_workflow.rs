@@ -131,11 +131,18 @@ fn val_agent_001_002_isolated_handoff_validation_and_explicit_pick() {
     assert_ne!(fork_alpha["branch"], fork_beta["branch"]);
     assert_ne!(fork_alpha["worktree"], fork_beta["worktree"]);
 
-    let alpha_path = PathBuf::from(fork_alpha["worktree"].as_str().expect("alpha path"));
-    let beta_path = PathBuf::from(fork_beta["worktree"].as_str().expect("beta path"));
+    let alpha_path = PathBuf::from(fork_alpha["worktree"].as_str().expect("alpha path"))
+        .canonicalize()
+        .expect("canonical alpha path");
+    let beta_path = PathBuf::from(fork_beta["worktree"].as_str().expect("beta path"))
+        .canonicalize()
+        .expect("canonical beta path");
     assert!(alpha_path.is_dir());
     assert!(beta_path.is_dir());
-    let worktrees_after_fork = git_worktrees(root);
+    let worktrees_after_fork = git_worktrees(root)
+        .into_iter()
+        .map(|(path, head)| (path.canonicalize().expect("canonical worktree path"), head))
+        .collect::<Vec<_>>();
     assert_eq!(worktrees_after_fork.len(), 3);
     assert!(
         worktrees_after_fork
