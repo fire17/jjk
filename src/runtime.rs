@@ -3056,10 +3056,14 @@ fn context(cwd: &Path) -> Result<RuntimeContext, RuntimeError> {
     workspace_seed.push(0);
     workspace_seed.extend(&relative_locator);
     let derived_workspace_id = deterministic_v7_uuid(&workspace_seed);
-    let workspace_id = if let Some(id) = store
+    let locator_workspace = store
         .workspace_id_for_locator(&relative_locator)
-        .map_err(internal)?
-    {
+        .map_err(internal)?;
+    let head_workspace = observation_optional(&git, cwd, ["rev-parse", "--verify", "HEAD"])?
+        .map(|head| store.workspace_id_for_head(&head).map_err(internal))
+        .transpose()?
+        .flatten();
+    let workspace_id = if let Some(id) = locator_workspace.or(head_workspace) {
         id
     } else if store
         .current_state_row(derived_workspace_id)

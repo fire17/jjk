@@ -589,6 +589,20 @@ impl SqliteStore {
             })
             .transpose()
     }
+    pub(crate) fn workspace_id_for_head(&self, head_oid: &str) -> Result<Option<Uuid>, StoreError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT worktree_id FROM worktree_current WHERE head_oid = ?1 LIMIT 2")?;
+        let rows = statement
+            .query_map([head_oid], |row| row.get::<_, Vec<u8>>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        if rows.len() != 1 {
+            return Ok(None);
+        }
+        Ok(Some(Uuid::from_slice(&rows[0]).map_err(|error| {
+            StoreError::InvalidData(format!("invalid workspace id: {error}"))
+        })?))
+    }
     pub(crate) fn current_state_row(
         &self,
         workspace_id: Uuid,
