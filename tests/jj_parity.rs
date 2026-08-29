@@ -40,6 +40,7 @@ impl Sandbox {
         fs::create_dir_all(&bin).expect("create tool directory");
         fs::create_dir_all(&home).expect("create isolated home");
         fs::create_dir_all(&xdg).expect("create isolated XDG root");
+        #[cfg(unix)]
         install_tool(git, &bin.join(tool_file_name("git")));
         if let Some(jj) = jj {
             install_tool(jj, &bin.join(tool_file_name("jj")));
@@ -74,10 +75,7 @@ impl Sandbox {
             .env("LC_ALL", "C")
             .env("TZ", "UTC")
             .env("NO_COLOR", "1")
-            .env(
-                "PATH",
-                env::join_paths([&self.bin]).expect("single sandbox PATH"),
-            );
+            .env("PATH", sandbox_path(&self.bin, &self.git));
         command
     }
 
@@ -135,6 +133,21 @@ impl Sandbox {
             "-qm",
             "base",
         ]);
+    }
+}
+fn sandbox_path(bin: &Path, git: &Path) -> OsString {
+    #[cfg(windows)]
+    {
+        env::join_paths([
+            bin,
+            git.parent().expect("Git executable has a parent directory"),
+        ])
+        .expect("Windows sandbox PATH")
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = git;
+        env::join_paths([bin]).expect("single sandbox PATH")
     }
 }
 
