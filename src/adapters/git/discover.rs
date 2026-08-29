@@ -27,8 +27,8 @@ impl<R: ProcessRunner> GitCli<R> {
             ],
         )?;
         let mut lines = output.split(|byte| *byte == b'\n');
-        let git_dir = path(lines.next().unwrap_or_default(), "git directory")?;
-        let common_dir = path(lines.next().unwrap_or_default(), "Git common directory")?;
+        let git_dir = canonical_path(lines.next().unwrap_or_default(), "git directory")?;
+        let common_dir = canonical_path(lines.next().unwrap_or_default(), "Git common directory")?;
         let is_bare = boolean(lines.next(), "bare repository")?;
         let inside_worktree = boolean(lines.next(), "inside worktree")?;
         let worktree_root = if inside_worktree {
@@ -95,4 +95,8 @@ fn path(bytes: &[u8], field: &'static str) -> Result<PathBuf, GitError> {
         return Err(invalid(field, "empty path"));
     }
     Ok(PathBuf::from(native(bytes, field)?))
+}
+
+fn canonical_path(bytes: &[u8], field: &'static str) -> Result<PathBuf, GitError> {
+    fs::canonicalize(path(bytes, field)?).map_err(GitError::Io)
 }
