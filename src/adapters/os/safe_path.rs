@@ -1,5 +1,6 @@
 //! Race-resistant filesystem publication below caller-selected destinations.
 
+#[cfg(unix)]
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::Read;
