@@ -40,6 +40,10 @@ impl Drop for OsWriterGuard {
         let _ = fs2::FileExt::unlock(&self.file);
     }
 }
+fn lock_contended(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::WouldBlock
+        || cfg!(windows) && matches!(error.raw_os_error(), Some(32 | 33))
+}
 
 impl WriterLock for OsWriterLock {
     type Guard = OsWriterGuard;
@@ -69,13 +73,10 @@ impl WriterLock for OsWriterLock {
                     file.sync_data()?;
                     return Ok(OsWriterGuard { file });
                 }
-                Err(error)
-                    if error.kind() == std::io::ErrorKind::WouldBlock
-                        && Instant::now() < deadline =>
-                {
+                Err(error) if lock_contended(&error) && Instant::now() < deadline => {
                     thread::sleep(Duration::from_millis(10))
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(error) if lock_contended(&error) => {
                     let mut owner = String::new();
                     file.seek(SeekFrom::Start(0))?;
                     file.read_to_string(&mut owner)?;
