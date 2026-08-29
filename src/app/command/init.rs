@@ -82,7 +82,8 @@ pub(crate) fn preview_legacy_migration(
 ) -> Result<PreparedLegacyMigration, LegacyImportError> {
     let plan = LegacyImportPlan::discover(repository_root, git)?;
     let rollback_capsule = control_root
-        .join("migrations/legacy-v1")
+        .join("migrations")
+        .join("legacy-v1")
         .join(&plan.migration_id);
     let mut entity_counts = std::collections::BTreeMap::new();
     for entity in &plan.entities {

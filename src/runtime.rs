@@ -387,7 +387,7 @@ fn setup_legacy_rollback(
     root: &Path,
     common_dir: &Path,
 ) -> Result<i32, RuntimeError> {
-    let migration_root = common_dir.join("jjk/migrations/legacy-v1");
+    let migration_root = common_dir.join("jjk").join("migrations").join("legacy-v1");
     let mut capsules = fs::read_dir(&migration_root)
         .map_err(internal)?
         .collect::<Result<Vec<_>, _>>()
