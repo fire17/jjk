@@ -6,6 +6,22 @@ This project follows semantic versioning.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-29
+
+### Changed
+
+- Control snapshots now record only Git-visible paths (index entries plus untracked, non-ignored files) instead of walking the entire checkout. Ignored content such as `target/`, `node_modules/`, and `.worktrees/` is never stored, restored, or deleted; a repository with a 20 MB ignored artifact no longer grows `state.sqlite3` by ~144 MB per capture.
+- Snapshot byte fields are stored as base64 text; the previous JSON array form still loads, so existing control histories, conflict preimages, and backups remain readable.
+
+### Fixed
+
+- `return`, `up`, `down`, `undo`, `redo`, and conflict abort no longer delete uncaptured files. Restores remove only paths tracked by the index, owned by the target snapshot, or captured by the state being left; untracked extras created after a capture survive, and verification checks the restored projection rather than demanding a byte-identical checkout.
+- `return`, `up`, `down`, `undo`, and `redo` no longer refuse in a repository whose files were captured but never `git add`ed: when the user's index differs from the state tree, the workspace match now also accepts worktree content that equals the state tree, measured through a private index seeded from the state (`read-tree` + `add -u`). Staged-versus-worktree divergence still refuses.
+- Navigation is no longer refused right after a restore because the index stat cache is stale: the staged-versus-worktree check now compares content through a private refreshed index copy instead of trusting `git diff-files` stat data (previously an immediate `undo` after `return` failed until `git status` ran).
+- State queries accept the message that produced a label (`pick fast_purple` and `pick "fast purple"` both resolve `fast-purple`) and exact messages, not only the slugified label.
+- `jjk <command> --help` prints the exact argument grammar the runtime parses instead of a placeholder; every claimed command must document its grammar (registry test).
+- README and the `jjk` skill documented a `fork` grammar the binary rejected; both now show `jjk fork --worktree --json -- "<agent-name>"`.
+
 ## [0.2.1] - 2026-08-29
 
 ### Fixed

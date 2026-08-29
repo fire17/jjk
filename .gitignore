@@ -4,3 +4,6 @@ target/
 *.profraw
 .DS_Store
 .worktrees/
+/conversation/
+/.save_and_ship/
+/CONTINUE.md

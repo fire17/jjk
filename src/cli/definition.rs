@@ -63,6 +63,38 @@ fn summary(name: &str, class: CommandClass) -> &'static str {
     }
 }
 
+/// Exact argument grammar of a claimed command, as the runtime parses it. `<state>` accepts a
+/// state ID prefix, `refs/jjk/states/<id>`, a label, or the message that produced the label.
+#[must_use]
+pub fn usage(name: &str) -> &'static str {
+    match name {
+        "setup" => "jjk setup [--migration=<action>] [--json]",
+        "save" => "jjk save [--json] -- <message…>",
+        "step" => "jjk step [--json] -- <message…>",
+        "nice" => "jjk nice [--json] -- <message…>",
+        "star" => "jjk star [<state>] [--json]",
+        "unstar" => "jjk unstar [<state>] [--json]",
+        "see" | "story" | "current" | "status" | "doctor" | "back" | "forward" | "up" | "down"
+        | "undo" | "redo" => "[--json] [--width <columns>] [--no-color]",
+        "return" => "jjk return <state> [--json]",
+        "pick" => "jjk pick <state> [--json]",
+        "archive" => "jjk archive <state> [--json]",
+        "recover" => {
+            "jjk recover <state> [--json]\n       jjk recover <operation-id> (--resume | --abort) [--json]"
+        }
+        "fork" => "jjk fork [--worktree] [--json] -- <objective…>",
+        "freeze" => "jjk freeze [create [<path>] | verify <path> | inspect <path>] [--json]",
+        "backup" => "jjk backup [create [<path>] | verify <path>] [--json]",
+        "load" => "jjk load <backup-path> --into <new-destination> [--json]",
+        "handoff" => {
+            "jjk handoff create --request <handoff.json> [--json]\n       jjk handoff show <handoff-id> [--json]\n       jjk handoff consume <handoff-id> [--json]"
+        }
+        "validate" => "jjk validate <state> [--suite <name>] [--json] -- <program> [args…]",
+        "completion" => "jjk completion <bash|zsh|fish|powershell>",
+        _ => "[arguments]",
+    }
+}
+
 /// Render stable top-level help from the same registry that executes commands.
 #[must_use]
 pub fn top_level_help() -> String {
@@ -92,6 +124,14 @@ mod tests {
         let help = top_level_help();
         for descriptor in command_descriptors() {
             assert!(help.contains(descriptor.claim.name));
+        }
+        for descriptor in command_descriptors() {
+            assert_ne!(
+                usage(descriptor.claim.name),
+                "[arguments]",
+                "claimed command `{}` must document its grammar",
+                descriptor.claim.name
+            );
         }
         for unclaimed in ["init", "show", "diff", "worktree", "timeshift"] {
             assert!(

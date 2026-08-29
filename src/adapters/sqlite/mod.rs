@@ -120,6 +120,28 @@ pub(crate) struct RuntimeStateRow {
     pub archived: bool,
 }
 
+/// Label form of a free-text message: first six words, lowercase, non-alphanumerics folded to
+/// `-`, edges trimmed. Shared by capture (label creation) and lookup (query normalization).
+pub(crate) fn label_base(message: &str) -> String {
+    message
+        .split_whitespace()
+        .take(6)
+        .collect::<Vec<_>>()
+        .join("-")
+        .to_ascii_lowercase()
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_owned()
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct RuntimeStateInsert {
     pub state_id: Uuid,
@@ -200,11 +222,37 @@ pub(crate) struct RuntimeGitRef {
     pub symbolic: Option<Vec<u8>>,
 }
 
+/// Large byte fields are stored as base64 text; a JSON number array (the pre-0.3 form) still
+/// deserializes so existing control histories, preimage artifacts, and backups keep loading.
+mod byte_field {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&STANDARD.encode(bytes))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Form {
+            Text(String),
+            Raw(Vec<u8>),
+        }
+        match Form::deserialize(deserializer)? {
+            Form::Text(text) => STANDARD.decode(text).map_err(serde::de::Error::custom),
+            Form::Raw(bytes) => Ok(bytes),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub(crate) enum RuntimeWorktreeEntry {
     Regular {
         path: Vec<u8>,
         mode: u32,
+        #[serde(with = "byte_field")]
         bytes: Vec<u8>,
     },
     Symlink {
@@ -218,8 +266,37 @@ pub(crate) struct RuntimeGitSnapshot {
     pub refs: Vec<RuntimeGitRef>,
     pub head_symbolic: Option<Vec<u8>>,
     pub head_oid: Option<Vec<u8>>,
+    #[serde(with = "byte_field")]
     pub index: Vec<u8>,
     pub worktree: Vec<RuntimeWorktreeEntry>,
+}
+
+#[cfg(test)]
+mod snapshot_format_tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_bytes_round_trip_as_base64_and_accept_legacy_arrays() {
+        let snapshot = RuntimeGitSnapshot {
+            refs: Vec::new(),
+            head_symbolic: None,
+            head_oid: None,
+            index: vec![0, 255, 10],
+            worktree: vec![RuntimeWorktreeEntry::Regular {
+                path: b"a.bin".to_vec(),
+                mode: 0o644,
+                bytes: vec![1, 2, 3, 0, 254],
+            }],
+        };
+        let json = serde_json::to_string(&snapshot).expect("serialize");
+        assert!(json.contains("\"index\":\"AP8K\""), "{json}");
+        assert!(json.contains("\"bytes\":\"AQIDAP4=\""), "{json}");
+        let back: RuntimeGitSnapshot = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, snapshot);
+        let legacy = r#"{"refs":[],"head_symbolic":null,"head_oid":null,"index":[0,255,10],"worktree":[{"Regular":{"path":[97,46,98,105,110],"mode":420,"bytes":[1,2,3,0,254]}}]}"#;
+        let from_legacy: RuntimeGitSnapshot = serde_json::from_str(legacy).expect("legacy form");
+        assert_eq!(from_legacy, snapshot);
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -659,7 +736,10 @@ impl SqliteStore {
             .transpose()
     }
 
+    /// Resolve a state by ID prefix, `refs/jjk/states/<id>`, exact label, exact message, or the
+    /// label form of a message (`fast_purple` and `fast purple` both resolve `fast-purple`).
     pub(crate) fn resolve_state_row(&self, query: &str) -> Result<RuntimeStateRow, StoreError> {
+        let query_label = label_base(query);
         let normalized = query
             .parse::<crate::domain::StateId>()
             .map(|id| hex::encode_upper(id.into_bytes()))
@@ -675,6 +755,8 @@ impl SqliteStore {
             .filter(|state| {
                 state.state_id.starts_with(&normalized)
                     || state.label == query
+                    || state.message == query
+                    || (!query_label.is_empty() && state.label == query_label)
                     || format!("refs/jjk/states/{}", state.state_id).eq_ignore_ascii_case(query)
             })
             .collect::<Vec<_>>();

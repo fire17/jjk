@@ -601,3 +601,302 @@ fn corrupted_backup_fails_without_creating_restore_target() {
     assert_eq!(refused.status.code(), Some(70));
     assert!(!target.exists());
 }
+
+#[test]
+fn return_works_when_captured_files_were_never_staged() {
+    let directory = TempDir::new().expect("tempdir");
+    let root = directory.path();
+    let git = std::path::Path::new("git");
+    let jjk = assert_cmd::cargo::cargo_bin!("jjk");
+
+    successful(root, git, &["init", "-q", "-b", "main"]);
+    disable_line_ending_conversion(root, git);
+    successful(root, &jjk, &["setup", "--json"]);
+
+    // Fresh directory: files exist only in the worktree; the index stays empty.
+    fs::write(root.join("color.txt"), "green\n").expect("write green");
+    let green = json(&successful(root, &jjk, &["save", "--json", "--", "green"]));
+    fs::write(root.join("color.txt"), "purple\n").expect("write purple");
+    let purple = json(&successful(root, &jjk, &["step", "--json", "--", "purple"]));
+    assert_eq!(purple["logical_parent"], green["state_id"]);
+
+    let restored = successful(root, &jjk, &["return", "green", "--json"]);
+    assert_eq!(json(&restored)["state_id"], green["state_id"]);
+    assert_eq!(
+        fs::read_to_string(root.join("color.txt")).expect("restored"),
+        "green\n"
+    );
+
+    // A worktree edit of a captured file after the capture still blocks navigation.
+    fs::write(root.join("color.txt"), "dirty\n").expect("dirty");
+    let refused = run(root, &jjk, &["return", "purple", "--json"]);
+    assert!(
+        !refused.status.success(),
+        "dirty worktree must refuse return"
+    );
+}
+
+#[test]
+fn state_queries_accept_messages_and_unnormalized_labels() {
+    let directory = TempDir::new().expect("tempdir");
+    let root = directory.path();
+    let git = std::path::Path::new("git");
+    let jjk = assert_cmd::cargo::cargo_bin!("jjk");
+
+    successful(root, git, &["init", "-q", "-b", "main"]);
+    disable_line_ending_conversion(root, git);
+    successful(root, &jjk, &["setup", "--json"]);
+    fs::write(root.join("color.txt"), "green\n").expect("write green");
+    successful(root, git, &["add", "color.txt"]);
+    let green = json(&successful(root, &jjk, &["save", "--json", "--", "green"]));
+    fs::write(root.join("color.txt"), "purple\n").expect("write purple");
+    successful(root, git, &["add", "color.txt"]);
+    let purple = json(&successful(
+        root,
+        &jjk,
+        &["step", "--json", "--", "Fast_Purple mode!"],
+    ));
+    assert_eq!(purple["label"], "fast-purple-mode");
+
+    for query in ["fast-purple-mode", "Fast_Purple mode!", "fast_purple mode"] {
+        let starred = json(&successful(root, &jjk, &["star", query, "--json"]));
+        assert_eq!(starred["state_id"], purple["state_id"], "query {query}");
+    }
+    let restored = json(&successful(root, &jjk, &["return", "green", "--json"]));
+    assert_eq!(restored["state_id"], green["state_id"]);
+}
+
+#[test]
+fn command_help_prints_exact_grammar() {
+    let directory = TempDir::new().expect("tempdir");
+    let jjk = assert_cmd::cargo::cargo_bin!("jjk");
+    for (command, fragment) in [
+        ("fork", "jjk fork [--worktree] [--json] -- <objective…>"),
+        ("validate", "-- <program> [args…]"),
+        ("handoff", "handoff create --request <handoff.json>"),
+        ("load", "--into <new-destination>"),
+        ("see", "jjk see [--json] [--width <columns>]"),
+    ] {
+        let help =
+            String::from_utf8(successful(directory.path(), &jjk, &[command, "--help"]).stdout)
+                .expect("help UTF-8");
+        assert!(help.contains(fragment), "{command} help:\n{help}");
+        assert!(
+            !help.contains("[arguments]"),
+            "{command} help still generic:\n{help}"
+        );
+    }
+}
+
+fn init_repository(root: &std::path::Path, git: &std::path::Path) {
+    successful(root, git, &["init", "-q", "-b", "main"]);
+    disable_line_ending_conversion(root, git);
+}
+
+fn control_database_bytes(root: &std::path::Path) -> u64 {
+    ["state.sqlite3", "state.sqlite3-wal"]
+        .iter()
+        .map(|name| {
+            fs::metadata(root.join(".git").join("jjk").join(name))
+                .map(|metadata| metadata.len())
+                .unwrap_or(0)
+        })
+        .sum()
+}
+
+#[test]
+fn navigation_never_deletes_uncaptured_files() {
+    let directory = TempDir::new().expect("tempdir");
+    let root = directory.path();
+    let git = std::path::Path::new("git");
+    let jjk = assert_cmd::cargo::cargo_bin!("jjk");
+    init_repository(root, git);
+    fs::write(root.join(".gitignore"), "build/\n").expect("write ignore rules");
+    fs::write(root.join("color.txt"), "base\n").expect("write base");
+    successful(root, git, &["add", "-A"]);
+    successful(
+        root,
+        git,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "commit",
+            "-qm",
+            "base",
+        ],
+    );
+    successful(root, &jjk, &["setup", "--json"]);
+
+    fs::write(root.join("color.txt"), "green\n").expect("write green");
+    successful(root, git, &["add", "-A"]);
+    let green = json(&successful(root, &jjk, &["save", "--json", "--", "green"]));
+    fs::write(root.join("color.txt"), "purple\n").expect("write purple");
+    fs::write(root.join("fast.txt"), "fast\n").expect("write captured extra");
+    successful(root, git, &["add", "-A"]);
+    successful(root, &jjk, &["step", "--json", "--", "fast purple"]);
+
+    // Work that JJK never captured: an untracked note and ignored build output.
+    fs::write(root.join("notes.md"), "scratch\n").expect("write untracked extra");
+    fs::create_dir_all(root.join("build")).expect("create build dir");
+    fs::write(root.join("build").join("out.bin"), "artifact\n").expect("write ignored extra");
+
+    let restored = json(&successful(root, &jjk, &["return", "green", "--json"]));
+    assert_eq!(restored["state_id"], green["state_id"]);
+    assert_eq!(
+        fs::read_to_string(root.join("color.txt")).expect("restored"),
+        "green\n"
+    );
+    assert!(
+        !root.join("fast.txt").exists(),
+        "a file captured by the state being left must be removed"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("notes.md")).expect("untracked extra survives"),
+        "scratch\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("build").join("out.bin")).expect("ignored extra survives"),
+        "artifact\n"
+    );
+    let doctor = json(&successful(root, &jjk, &["doctor", "--json"]));
+    assert_eq!(doctor["healthy"], true);
+}
+
+#[test]
+fn navigation_never_deletes_uncaptured_files_in_unstaged_repositories() {
+    let directory = TempDir::new().expect("tempdir");
+    let root = directory.path();
+    let git = std::path::Path::new("git");
+    let jjk = assert_cmd::cargo::cargo_bin!("jjk");
+    init_repository(root, git);
+    successful(root, &jjk, &["setup", "--json"]);
+    fs::write(root.join("color.txt"), "green\n").expect("write green");
+    successful(root, &jjk, &["save", "--json", "--", "green"]);
+    fs::write(root.join("color.txt"), "purple\n").expect("write purple");
+    fs::write(root.join("fast.txt"), "fast\n").expect("write captured extra");
+    let purple = json(&successful(root, &jjk, &["step", "--json", "--", "purple"]));
+    fs::write(root.join("notes.md"), "scratch\n").expect("write untracked extra");
+
+    successful(root, &jjk, &["return", "green", "--json"]);
+    assert_eq!(
+        fs::read_to_string(root.join("color.txt")).expect("restored"),
+        "green\n"
+    );
+    assert!(!root.join("fast.txt").exists(), "captured file removed");
+    assert!(root.join("notes.md").is_file(), "uncaptured extra survives");
+
+    let forward = json(&successful(root, &jjk, &["return", "purple", "--json"]));
+    assert_eq!(forward["state_id"], purple["state_id"]);
+    assert_eq!(
+        fs::read_to_string(root.join("fast.txt")).expect("captured file restored"),
+        "fast\n"
+    );
+    assert!(
+        root.join("notes.md").is_file(),
+        "extra survives the second navigation"
+    );
+}
+
+#[test]
+fn snapshots_exclude_ignored_content_and_stay_small() {
+    let directory = TempDir::new().expect("tempdir");
+    let root = directory.path();
+    let git = std::path::Path::new("git");
+    let jjk = assert_cmd::cargo::cargo_bin!("jjk");
+    init_repository(root, git);
+    fs::write(root.join(".gitignore"), "build/\n").expect("write ignore rules");
+    fs::write(root.join("a.txt"), "a\n").expect("write source");
+    fs::create_dir_all(root.join("build")).expect("create build dir");
+    let ignored_bytes = 20_000_000usize;
+    fs::write(
+        root.join("build").join("blob.bin"),
+        vec![0x5au8; ignored_bytes],
+    )
+    .expect("write large ignored artifact");
+    successful(root, git, &["add", "-A"]);
+    successful(
+        root,
+        git,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "commit",
+            "-qm",
+            "base",
+        ],
+    );
+    successful(root, &jjk, &["setup", "--json"]);
+    for step in ["one", "two"] {
+        fs::write(root.join("a.txt"), format!("{step}\n")).expect("write step");
+        successful(root, git, &["add", "-A"]);
+        successful(root, &jjk, &["step", "--json", "--", step]);
+    }
+    let database_bytes = control_database_bytes(root);
+    assert!(
+        database_bytes < (ignored_bytes / 4) as u64,
+        "control database must not embed ignored content: {database_bytes} bytes"
+    );
+    successful(root, &jjk, &["return", "one", "--json"]);
+    assert_eq!(
+        fs::metadata(root.join("build").join("blob.bin"))
+            .expect("ignored artifact survives navigation")
+            .len(),
+        ignored_bytes as u64
+    );
+}
+
+#[test]
+fn navigation_is_not_blocked_by_stale_index_stat_after_a_restore() {
+    let directory = TempDir::new().expect("tempdir");
+    let root = directory.path();
+    let git = std::path::Path::new("git");
+    let jjk = assert_cmd::cargo::cargo_bin!("jjk");
+    init_repository(root, git);
+    fs::write(root.join("a.txt"), "base\n").expect("write base");
+    successful(root, git, &["add", "-A"]);
+    successful(
+        root,
+        git,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "commit",
+            "-qm",
+            "base",
+        ],
+    );
+    successful(root, &jjk, &["setup", "--json"]);
+    fs::write(root.join("a.txt"), "green\n").expect("write green");
+    successful(root, git, &["add", "-A"]);
+    let green = json(&successful(root, &jjk, &["save", "--json", "--", "green"]));
+    fs::write(root.join("a.txt"), "purple\n").expect("write purple");
+    successful(root, git, &["add", "-A"]);
+    let purple = json(&successful(root, &jjk, &["step", "--json", "--", "purple"]));
+
+    // No porcelain Git command runs between these navigations, so the index stat cache is
+    // exactly as the restore left it.
+    let restored = json(&successful(root, &jjk, &["return", "green", "--json"]));
+    assert_eq!(restored["state_id"], green["state_id"]);
+    let undone = json(&successful(root, &jjk, &["undo", "--json"]));
+    assert_eq!(
+        json(&successful(root, &jjk, &["current", "--json"]))["state_id"],
+        undone["state_id"]
+    );
+    let redone = json(&successful(root, &jjk, &["redo", "--json"]));
+    assert_eq!(
+        json(&successful(root, &jjk, &["current", "--json"]))["state_id"],
+        redone["state_id"]
+    );
+    let forward = json(&successful(root, &jjk, &["return", "purple", "--json"]));
+    assert_eq!(forward["state_id"], purple["state_id"]);
+    assert_eq!(
+        fs::read_to_string(root.join("a.txt")).expect("restored"),
+        "purple\n"
+    );
+}

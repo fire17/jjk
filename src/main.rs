@@ -98,7 +98,12 @@ fn print_command_help(command: &str) -> i32 {
         CommandClass::TransparentGitPassthrough => "Git passthrough",
     };
     println!("{command} — {}", descriptor.summary);
-    println!("\nUsage: jjk {command} [arguments]");
+    let usage = jjk::cli::definition::usage(command);
+    if usage.starts_with("jjk ") {
+        println!("\nUsage: {usage}");
+    } else {
+        println!("\nUsage: jjk {command} {usage}");
+    }
     println!("\nClass: {class}");
     println!("\nUse `jjk --help` to return to the stable command index.");
     ExitCode::Success.get()

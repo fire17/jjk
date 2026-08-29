@@ -557,8 +557,15 @@ fn compiled_cli_archive_and_ambiguous_down_preserve_sibling_futures() {
     );
 
     let before = normalized_graph(root, &jjk);
+    // Two logical children: `down` must report the ambiguity with the stable usage exit code
+    // (exit 2, see `snake_workflow`), never pick one, and never touch the graph.
     let refused = run(root, &jjk, &["down", "--json"]);
-    assert_eq!(refused.status.code(), Some(4));
+    assert_eq!(refused.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("ambiguous navigation"),
+        "down must explain the ambiguity: {}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
     assert_eq!(normalized_graph(root, &jjk), before);
     let current = json(&successful(root, &jjk, &["current", "--json"]));
     assert_eq!(current["state_id"], parent["state_id"]);

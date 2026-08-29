@@ -26,7 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/fire17/jjk/main/scripts/install.sh 
 | When told… | Do this |
 |---|---|
 | “save this point” | `jjk save -- "factual description"` |
-| “work in parallel” | `jjk fork <agent-name> --worktree --json` |
+| “work in parallel” | `jjk fork --worktree --json -- "<agent-name>"` |
 | “hand this to another agent” | validate exact content, then create a typed `jjk handoff` |
 | “bring that change here” | inspect the handoff, then `jjk pick <state>` |
 | “recover” | inspect `jjk doctor --json`; execute its exact remediation |
@@ -104,7 +104,7 @@ jjk git -- status --porcelain=v1           # explicit passthrough escape
 <details>
 <summary><b>Parallel-agent protocol</b></summary>
 
-1. Create one worktree per worker: `jjk fork alpha --worktree --json`.
+1. Create one worktree per worker: `jjk fork --worktree --json -- "alpha"`.
 2. Work only in the returned path and retain the typed attempt/workspace IDs.
 3. Capture coherent changes: `jjk step -- "…"`.
 4. Run `jjk validate` so evidence is bound to exact state content.
@@ -133,7 +133,7 @@ A crash before external mutation rolls metadata back. A crash after an effect us
 |---|---|---|
 | Install | One `jjk` executable in `JJK_INSTALL_DIR` | Edit shell startup files or repository state |
 | `setup` | Shared JJK control data under the Git common directory | Change HEAD, index, files, refs, or user Git config |
-| Capture/navigation | Declared Git/JJK state under a durable operation | Delete alternate futures |
+| Capture/navigation | Declared Git/JJK state under a durable operation | Delete alternate futures, uncaptured untracked files, or ignored content |
 | Git passthrough | Exactly the Git command invoked | Sandbox Git hooks, credentials, config, or filters |
 | `archive` | Visibility metadata | Erase state topology or objects |
 | `undo` / `redo` | Complete recorded Git + JJK control snapshot | Guess across external divergence |
@@ -209,7 +209,7 @@ curl -fsSL https://raw.githubusercontent.com/fire17/jjk/main/scripts/install.sh 
 Pin version and destination:
 
 ```sh
-JJK_VERSION=v0.2.1 JJK_INSTALL_DIR="$HOME/.local/bin" \
+JJK_VERSION=v0.3.0 JJK_INSTALL_DIR="$HOME/.local/bin" \
   sh scripts/install.sh
 ```
 
@@ -218,7 +218,7 @@ The installer downloads the matching archive and `.sha256`, verifies it, and ins
 ### From source
 
 ```sh
-cargo install --locked --git https://github.com/fire17/jjk --tag v0.2.1
+cargo install --locked --git https://github.com/fire17/jjk --tag v0.3.0
 ```
 
 Requires Rust 1.85+ and Git at runtime.
