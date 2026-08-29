@@ -6,6 +6,13 @@ This project follows semantic versioning.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-29
+
+### Fixed
+
+- Closed `git patch-id` stdin before waiting so the canonical snake workflow cannot deadlock on Windows.
+- Stabilized linked-worktree identity, recovery publication, routing fixtures, and line-ending isolation across Windows runners.
+
 ## [0.1.0] - 2026-08-29
 
 ### Added
