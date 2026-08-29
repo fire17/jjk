@@ -91,6 +91,7 @@ fn val_agent_001_002_isolated_handoff_validation_and_explicit_pick() {
     git(root, &["init", "-q", "-b", "main"]);
     git(root, &["config", "user.name", "JJK Agent Fixture"]);
     git(root, &["config", "user.email", "agents@example.test"]);
+    git(root, &["config", "core.autocrlf", "false"]);
     fs::write(root.join("base.txt"), b"deterministic base\n").expect("write base");
     git(root, &["add", "base.txt"]);
     git(root, &["commit", "-qm", "fixture base"]);
