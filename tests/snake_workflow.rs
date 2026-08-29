@@ -23,6 +23,7 @@ impl Repository {
         let root = directory.path().join("repository");
         fs::create_dir(&root).expect("create repository root");
         git_ok(&root, &["init", "-q", "-b", "main"]);
+        git_ok(&root, &["config", "core.autocrlf", "false"]);
         git_ok(&root, &["config", "user.name", "JJK Snake Fixture"]);
         git_ok(
             &root,
