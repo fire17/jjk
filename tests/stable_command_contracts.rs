@@ -511,6 +511,8 @@ fn completion_is_deterministic_registry_derived_and_has_no_repository_side_effec
         "save",
         "step",
         "nice",
+        "star",
+        "unstar",
         "see",
         "return",
         "pick",

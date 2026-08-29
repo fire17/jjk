@@ -46,6 +46,8 @@ const NATIVE: &[&str] = &[
     "save",
     "step",
     "nice",
+    "star",
+    "unstar",
     "see",
     "return",
     "pick",
@@ -357,7 +359,6 @@ mod tests {
             "rebase",
             "worktree",
             "timeshift",
-            "star",
             "promote",
         ] {
             assert_eq!(

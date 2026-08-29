@@ -1,4 +1,4 @@
-# JJK v0.1 Rewrite — Acceptance Contracts
+# JJK — Acceptance Contracts
 
 These contracts are the release gates for the rewrite. A claim is complete only when its proof command has run against the release artifact and its evidence is recorded.
 
@@ -10,8 +10,8 @@ JJK turns a Git working directory into a safe space for stateful, reversible hum
 
 | Class | Rule | Examples |
 |---|---|---|
-| JJK-native | Deliberately non-Git vocabulary; implements semantic state, topology, recovery, collaboration, and operation behavior | `setup`, `save`, `step`, `nice`, `see`, `return`, `pick`, `fork`, `freeze`, `current`, `story`, `back`, `forward`, `up`, `down`, `archive`, `recover`, `undo`, `redo`, `backup`, `load`, `handoff`, `validate`, `doctor`, `completion` |
-| Git-enhanced | Uses a Git name only when JJK deliberately adds state-aware value; the exact flag grammar is owned by the versioned routing registry | `status` in stable v0.1 |
+| JJK-native | Deliberately non-Git vocabulary; implements semantic state, topology, curation, recovery, collaboration, and operation behavior | `setup`, `save`, `step`, `nice`, `star`, `unstar`, `see`, `return`, `pick`, `fork`, `freeze`, `current`, `story`, `back`, `forward`, `up`, `down`, `archive`, `recover`, `undo`, `redo`, `backup`, `load`, `handoff`, `validate`, `doctor`, `completion` |
+| Git-enhanced | Uses a Git name only when JJK deliberately adds state-aware value; the exact flag grammar is owned by the versioned routing registry | `status` |
 | Git passthrough | Every unenhanced Git command is executed by the real Git binary with original argv bytes, cwd, environment, stdio/TTY, signals, and exit status | `init`, `clone`, `rebase`, `merge`, `fetch`, `remote`, `config`, unknown future Git verbs |
 
 Routing invariant: an argv sequence not claimed by the versioned JJK-native/enhanced registry is passthrough, not an error and not guessed behavior.
@@ -25,6 +25,7 @@ Routing invariant: an argv sequence not claimed by the versioned JJK-native/enha
 | VAL-CORE-003 | Returning to a historical state restores its exact tree and preserves every descendant future. The next capture creates a sibling attempt only when divergence actually occurs. | Green→purple; return green→orange fixture; both tips remain reachable and visible. |
 | VAL-CORE-004 | `pick` applies exactly the source logical-parent→source-state delta, never the source's accumulated ancestry. | Purple+fast to orange yields orange+fast, never purple+fast; patch identity and source/base provenance recorded. |
 | VAL-CORE-005 | Delete/archive hides but does not erase. Recover restores original topology. Undo/redo restores the complete JJK+Git control state. | Archive/recover and whole-control-state round-trip fixtures. |
+| VAL-CORE-006 | `star [state]` and `unstar [state]` change only the memorable-anchor annotation on an existing state, are idempotent, and never create a duplicate snapshot. | CLI JSON contract plus unchanged state count and durable `current`/`see`/`story` projection checks. |
 | VAL-TXN-001 | Every mutating operation is recoverable across a process crash at every durable boundary. | Fault injection at each transaction state; reopen deterministically rolls back or completes forward. |
 | VAL-TXN-002 | Recovery never overwrites bytes or refs changed externally after the recorded preimage. | Concurrent external-change fixture returns `recovery_required` and preserves the external state. |
 | VAL-TXN-003 | Multiple readers proceed concurrently; conflicting writers serialize or return a typed bounded-time conflict. No silent lost update. | Multi-process stress fixture with event/projection version checks. |

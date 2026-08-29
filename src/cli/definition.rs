@@ -33,6 +33,8 @@ fn summary(name: &str, class: CommandClass) -> &'static str {
         ("save", _) => "Capture an explicitly described semantic state",
         ("step", _) => "Capture a meaningful working step",
         ("nice", _) => "Capture a known-good waypoint",
+        ("star", _) => "Mark an existing state as a memorable anchor",
+        ("unstar", _) => "Remove the memorable-anchor mark from a state",
         ("see", _) => "Show the semantic state graph",
         ("return", _) => "Return to an exact prior state without deleting futures",
         ("pick", _) => "Apply one state's exact parent-to-state delta",
@@ -91,7 +93,7 @@ mod tests {
         for descriptor in command_descriptors() {
             assert!(help.contains(descriptor.claim.name));
         }
-        for unclaimed in ["init", "show", "diff", "worktree", "timeshift", "star"] {
+        for unclaimed in ["init", "show", "diff", "worktree", "timeshift"] {
             assert!(
                 !help
                     .lines()

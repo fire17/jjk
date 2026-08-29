@@ -102,6 +102,111 @@ fn canonical_state_engine_captures_graph_and_restores_content() {
 }
 
 #[test]
+fn star_marks_existing_states_without_creating_snapshots() {
+    let directory = TempDir::new().expect("tempdir");
+    let root = directory.path();
+    let git = std::path::Path::new("git");
+    let jjk = assert_cmd::cargo::cargo_bin!("jjk");
+
+    successful(root, git, &["init", "-q", "-b", "main"]);
+    disable_line_ending_conversion(root, git);
+    fs::write(root.join("story.txt"), "base\n").expect("write fixture");
+    successful(root, git, &["add", "story.txt"]);
+    successful(
+        root,
+        git,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "commit",
+            "-qm",
+            "base",
+        ],
+    );
+    successful(root, &jjk, &["setup", "--json"]);
+    fs::write(root.join("story.txt"), "first\n").expect("write first state");
+    successful(root, git, &["add", "story.txt"]);
+    let first = json(&successful(
+        root,
+        &jjk,
+        &["step", "--json", "--", "first state"],
+    ));
+    fs::write(root.join("story.txt"), "second\n").expect("write second state");
+    successful(root, git, &["add", "story.txt"]);
+    let second = json(&successful(
+        root,
+        &jjk,
+        &["step", "--json", "--", "second state"],
+    ));
+
+    let before = json(&successful(root, &jjk, &["see", "--json"]));
+    let before_count = before["states"].as_array().expect("states").len();
+    let first_id = first["state_id"].as_str().expect("first state id");
+    let second_id = second["state_id"].as_str().expect("second state id");
+
+    let starred = json(&successful(root, &jjk, &["star", first_id, "--json"]));
+    assert_eq!(starred["command"], "star");
+    assert_eq!(starred["state_id"], first_id);
+    assert_eq!(starred["starred"], true);
+    assert_eq!(starred["changed"], true);
+    let repeated = json(&successful(root, &jjk, &["star", first_id, "--json"]));
+    assert_eq!(repeated["changed"], false);
+
+    let graph = json(&successful(root, &jjk, &["see", "--json"]));
+    assert_eq!(
+        graph["states"].as_array().expect("states").len(),
+        before_count
+    );
+    let first_row = graph["states"]
+        .as_array()
+        .expect("states")
+        .iter()
+        .find(|state| state["state_id"] == first_id)
+        .expect("first state row");
+    assert_eq!(first_row["starred"], true);
+    assert_eq!(graph["current_state"], second_id);
+    assert_eq!(
+        json(&successful(root, &jjk, &["current", "--json"]))["starred"],
+        false
+    );
+
+    let current_star = json(&successful(root, &jjk, &["star", "--json"]));
+    assert_eq!(current_star["state_id"], second_id);
+    assert_eq!(
+        json(&successful(root, &jjk, &["current", "--json"]))["starred"],
+        true
+    );
+
+    let story = json(&successful(root, &jjk, &["story", "--json"]));
+    let story_ids = story["states"]
+        .as_array()
+        .expect("story states")
+        .iter()
+        .filter_map(|state| state["state_id"].as_str())
+        .collect::<Vec<_>>();
+    assert!(story_ids.contains(&first_id));
+    assert!(story_ids.contains(&second_id));
+
+    let unstarred = json(&successful(root, &jjk, &["unstar", first_id, "--json"]));
+    assert_eq!(unstarred["starred"], false);
+    assert_eq!(unstarred["changed"], true);
+    let graph = json(&successful(root, &jjk, &["see", "--json"]));
+    let first_row = graph["states"]
+        .as_array()
+        .expect("states")
+        .iter()
+        .find(|state| state["state_id"] == first_id)
+        .expect("first state row");
+    assert_eq!(first_row["starred"], false);
+    assert_eq!(
+        graph["states"].as_array().expect("states").len(),
+        before_count
+    );
+}
+
+#[test]
 fn graph_navigation_fork_and_visibility_are_durable() {
     let directory = TempDir::new().expect("tempdir");
     let root = directory.path();

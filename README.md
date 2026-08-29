@@ -74,13 +74,14 @@ jjk current
 jjk see
 ```
 
-That is the loop: **setup → save → change → step → current → see**. Use `jjk return <state>` to revisit a point and `jjk pick <state>` to compose one exact delta.
+That is the loop: **setup → save → change → step → current → see**. Use `jjk star [state]` to mark a memorable existing point without creating another snapshot, `jjk return <state>` to revisit a point, and `jjk pick <state>` to compose one exact delta.
 
 ## One closed command boundary
 
 | Area | Commands | Contract |
 |---|---|---|
 | Enroll and capture | `setup`, `save`, `step`, `nice` | Create the safe space and record semantic states |
+| Curate | `star`, `unstar` | Mark or unmark memorable existing states without changing their snapshots |
 | Orient | `current`, `status`, `see`, `story` | Show location, Git truth, topology, and recovery state |
 | Navigate | `return`, `back`, `forward`, `up`, `down` | Move without silently deleting alternate futures |
 | Branch and compose | `fork`, `pick` | Create isolated attempts and apply one exact delta |
@@ -208,7 +209,7 @@ curl -fsSL https://raw.githubusercontent.com/fire17/jjk/main/scripts/install.sh 
 Pin version and destination:
 
 ```sh
-JJK_VERSION=v0.1.2 JJK_INSTALL_DIR="$HOME/.local/bin" \
+JJK_VERSION=v0.2.0 JJK_INSTALL_DIR="$HOME/.local/bin" \
   sh scripts/install.sh
 ```
 
@@ -217,7 +218,7 @@ The installer downloads the matching archive and `.sha256`, verifies it, and ins
 ### From source
 
 ```sh
-cargo install --locked --git https://github.com/fire17/jjk --tag v0.1.2
+cargo install --locked --git https://github.com/fire17/jjk --tag v0.2.0
 ```
 
 Requires Rust 1.85+ and Git at runtime.

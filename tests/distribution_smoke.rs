@@ -413,6 +413,8 @@ fn command_probes() -> BTreeMap<&'static str, &'static [&'static str]> {
         ("save", &["save", "--json", "--", "save probe"] as &[_]),
         ("step", &["step", "--json", "--", "step probe"] as &[_]),
         ("nice", &["nice", "--json", "--", "nice probe"] as &[_]),
+        ("star", &["star", "--json"] as &[_]),
+        ("unstar", &["unstar", "--json"] as &[_]),
         ("see", &["see", "--json"] as &[_]),
         ("return", &["return", "missing-state", "--json"] as &[_]),
         ("pick", &["pick", "missing-state", "--json"] as &[_]),

@@ -6,6 +6,12 @@ This project follows semantic versioning.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-29
+
+### Added
+
+- Added native `star [state]` and `unstar [state]` annotations, including durable JSON state, `current`/`see`/`story` visibility, and idempotent receipts without creating duplicate snapshots.
+
 ## [0.1.2] - 2026-08-29
 
 ### Fixed

@@ -53,6 +53,8 @@ pub fn dispatch_native(name: &str, args: &[OsString], cwd: &Path) -> Result<i32,
     match name {
         "setup" => setup(args, cwd),
         "save" | "step" | "nice" => capture(name, args, cwd),
+        "star" => star(true, args, cwd),
+        "unstar" => star(false, args, cwd),
         "current" => current(args, cwd),
         "status" => status(args, cwd),
         "see" | "story" => list(name, args, cwd),
@@ -683,7 +685,11 @@ fn current(args: &[OsString], cwd: &Path) -> Result<i32, RuntimeError> {
         .map_err(internal)?
         .ok_or_else(|| RuntimeError::Unavailable("no JJK state exists".into()))?;
     let projection_version = state.created_seq.saturating_add(1);
-    let mut state = state_view("current", state)?;
+    let starred = context
+        .store
+        .state_is_starred(&state.state_id)
+        .map_err(internal)?;
+    let mut state = state_view("current", state, starred)?;
     if let Some(attempt_id) = context
         .store
         .current_attempt_id(context.workspace_id)
@@ -729,7 +735,19 @@ fn list(name: &str, args: &[OsString], cwd: &Path) -> Result<i32, RuntimeError> 
         .into_iter()
         .rev()
         .filter(|row| !row.archived)
-        .map(|row| state_view(name, row))
+        .filter_map(|row| {
+            let starred = context
+                .store
+                .state_is_starred(&row.state_id)
+                .map_err(internal);
+            match starred {
+                Ok(starred) if name != "story" || row.kind == "nice" || starred => {
+                    Some(state_view(name, row, starred))
+                }
+                Ok(_) => None,
+                Err(error) => Some(Err(error)),
+            }
+        })
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let projection_version = context.store.head().map_err(internal)?.local_seq;
     #[derive(Serialize)]
@@ -746,6 +764,82 @@ fn list(name: &str, args: &[OsString], cwd: &Path) -> Result<i32, RuntimeError> 
             projection_version,
             current_state,
             states,
+        },
+    )?;
+    Ok(0)
+}
+fn star(enabled: bool, args: &[OsString], cwd: &Path) -> Result<i32, RuntimeError> {
+    let command = if enabled { "star" } else { "unstar" };
+    let (format, target) = optional_state_argument(args, command)?;
+    let mut context = context(cwd)?;
+    let state = match target {
+        Some(target) => context
+            .store
+            .resolve_state_row(&target)
+            .map_err(unavailable_store)?,
+        None => context
+            .store
+            .current_state_row(context.workspace_id)
+            .map_err(internal)?
+            .ok_or_else(|| {
+                RuntimeError::Unavailable(format!(
+                    "{command} requires a current JJK state or explicit state"
+                ))
+            })?,
+    };
+    if state.archived {
+        return Err(RuntimeError::Unavailable(format!(
+            "cannot {command} archived state {}; recover it first",
+            display_state_id(&state.state_id)?
+        )));
+    }
+    let state_id = display_state_id(&state.state_id)?;
+    let changed = context
+        .store
+        .state_is_starred(&state.state_id)
+        .map_err(internal)?
+        != enabled;
+    if changed {
+        let (request, common_dir) = mutation_request(
+            &context,
+            cwd,
+            command,
+            serde_json::json!({"state_id":state_id,"starred":enabled}),
+            serde_json::json!({"projection":"state-annotation","kind":"star","enabled":enabled}),
+            None,
+        )?;
+        let store = &mut context.store;
+        let effect = |_prepared: &PreparedOperation<'_>| Ok::<(), EffectFailure<RuntimeError>>(());
+        let verify = |_effect: &()| Ok::<bool, RuntimeError>(true);
+        let projection_state = state.clone();
+        let state_for_result = state_id.clone();
+        let commit =
+            move |_effect: &()| -> Result<RuntimeMutationCommit<RuntimeProjection>, RuntimeError> {
+                let payload = serde_json::to_vec(&serde_json::json!({"state_id":state_for_result,"kind":"star","enabled":enabled})).map_err(internal)?;
+                Ok(fact_commit(
+                "StateAnnotated",
+                payload,
+                RuntimeProjection::Star { state: projection_state, enabled },
+                serde_json::to_vec(&serde_json::json!({"state_id":state_for_result,"starred":enabled,"changed":true})).map_err(internal)?,
+            ))
+            };
+        crate::app::runtime_mutation::execute(&common_dir, store, request, effect, verify, commit)
+            .map_err(transaction_error)?;
+    }
+    #[derive(Serialize)]
+    struct StarResult {
+        command: &'static str,
+        state_id: String,
+        starred: bool,
+        changed: bool,
+    }
+    emit(
+        format,
+        &StarResult {
+            command,
+            state_id,
+            starred: enabled,
+            changed,
         },
     )?;
     Ok(0)
@@ -3105,6 +3199,7 @@ struct StateView {
     logical_parent: Option<String>,
     created_seq: u64,
     archived: bool,
+    starred: bool,
 }
 
 pub(crate) fn capture_runtime_git_snapshot(
@@ -3467,7 +3562,11 @@ fn lexical_repository_root(git: &GitCli<OsProcess>, cwd: &Path) -> Result<PathBu
     Ok(root)
 }
 
-fn state_view(command: &str, state: RuntimeStateRow) -> Result<StateView, RuntimeError> {
+fn state_view(
+    command: &str,
+    state: RuntimeStateRow,
+    starred: bool,
+) -> Result<StateView, RuntimeError> {
     Ok(StateView {
         command: command.into(),
         state_id: display_state_id(&state.state_id)?,
@@ -3483,6 +3582,7 @@ fn state_view(command: &str, state: RuntimeStateRow) -> Result<StateView, Runtim
             .transpose()?,
         created_seq: state.created_seq,
         archived: state.archived,
+        starred,
     })
 }
 
@@ -3930,6 +4030,48 @@ fn state_argument(args: &[OsString], command: &str) -> Result<(Format, String), 
         })?,
     ))
 }
+fn optional_state_argument(
+    args: &[OsString],
+    command: &str,
+) -> Result<(Format, Option<String>), RuntimeError> {
+    let mut format = Format::Human(default_width());
+    let mut target = None;
+    let mut index = 0;
+    while index < args.len() {
+        let value = args[index].to_str().ok_or_else(|| {
+            RuntimeError::InvalidArguments(format!("`{command}` arguments must be UTF-8"))
+        })?;
+        match value {
+            "--json" | "--format=json" => format = Format::Json,
+            "--format=human" | "--no-color" => {}
+            "--format" => {
+                index += 1;
+                format = match args.get(index).and_then(|value| value.to_str()) {
+                    Some("json") => Format::Json,
+                    Some("human") => Format::Human(default_width()),
+                    _ => {
+                        return Err(RuntimeError::InvalidArguments(
+                            "`--format` requires human or json".into(),
+                        ));
+                    }
+                };
+            }
+            value if value.starts_with('-') => {
+                return Err(RuntimeError::InvalidArguments(format!(
+                    "unknown option `{value}`"
+                )));
+            }
+            value if target.is_none() => target = Some(value.to_owned()),
+            _ => {
+                return Err(RuntimeError::InvalidArguments(format!(
+                    "`{command}` accepts at most one state id or label"
+                )));
+            }
+        }
+        index += 1;
+    }
+    Ok((format, target))
+}
 fn emit(format: Format, value: &impl Serialize) -> Result<(), RuntimeError> {
     let json = serde_json::to_value(value).map_err(internal)?;
     match format {
@@ -4110,7 +4252,12 @@ fn render_runtime_human(value: &serde_json::Value, width: usize) -> String {
             }
         ),
         "current" => format!(
-            "current: {}\nkind: {}\nlabel: {}\nattempt: {}\ngit: {}\nparent: {}",
+            "current: {}{}\nkind: {}\nlabel: {}\nattempt: {}\ngit: {}\nparent: {}",
+            if value["starred"].as_bool().unwrap_or(false) {
+                "★ "
+            } else {
+                ""
+            },
             value["state_id"].as_str().unwrap_or("none"),
             value["kind"].as_str().unwrap_or("state"),
             value["label"].as_str().unwrap_or(""),
@@ -4128,10 +4275,15 @@ fn render_runtime_human(value: &serde_json::Value, width: usize) -> String {
                 let mut lines = vec!["   state          kind     label".to_owned()];
                 for state in states {
                     let id = state["state_id"].as_str().unwrap_or("unknown");
-                    let marker = if current == Some(id) { "*" } else { " " };
+                    let current_marker = if current == Some(id) { "*" } else { " " };
+                    let star_marker = if state["starred"].as_bool().unwrap_or(false) {
+                        "★"
+                    } else {
+                        " "
+                    };
                     let short = id.get(..id.len().min(14)).unwrap_or(id);
                     lines.push(format!(
-                        "{marker}  {short:<14} {:<8} {}",
+                        "{current_marker}{star_marker} {short:<14} {:<8} {}",
                         state["kind"].as_str().unwrap_or("state"),
                         state["label"].as_str().unwrap_or("")
                     ));
@@ -4139,6 +4291,20 @@ fn render_runtime_human(value: &serde_json::Value, width: usize) -> String {
                 lines.join("\n")
             })
             .unwrap_or_else(|| "No visible states saved yet.".to_owned()),
+        "star" | "unstar" => format!(
+            "{} {}{}",
+            if value["starred"].as_bool().unwrap_or(false) {
+                "starred"
+            } else {
+                "unstarred"
+            },
+            value["state_id"].as_str().unwrap_or("unknown"),
+            if value["changed"].as_bool() == Some(false) {
+                " (unchanged)"
+            } else {
+                ""
+            }
+        ),
         "doctor" => {
             let mut lines = vec![
                 format!(

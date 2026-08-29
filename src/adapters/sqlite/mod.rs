@@ -137,6 +137,7 @@ pub(crate) struct RuntimeStateInsert {
 
 const RUNTIME_NAVIGATION_PROJECTION: &str = "runtime-navigation-v1";
 const RUNTIME_CONTROL_PROJECTION: &str = "runtime-control-history-v1";
+const RUNTIME_ANNOTATIONS_PROJECTION: &str = "runtime-annotations-v1";
 const RUNTIME_RECORDS_PROJECTION: &str = "runtime-records-v1";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -171,6 +172,10 @@ pub(crate) enum RuntimeProjection {
     Archive {
         state: RuntimeStateRow,
         archived: bool,
+    },
+    Star {
+        state: RuntimeStateRow,
+        enabled: bool,
     },
     PickedState {
         state: RuntimeStateInsert,
@@ -682,6 +687,25 @@ impl SqliteStore {
                 "state `{query}` is ambiguous"
             ))),
         }
+    }
+    pub(crate) fn state_is_starred(&self, state_id: &str) -> Result<bool, StoreError> {
+        let state_id = parse_hex_uuid(state_id, "state id")?;
+        let value: Option<Vec<u8>> = self
+            .connection
+            .query_row(
+                "SELECT record_value FROM projection_records WHERE projection_name = ?1 AND record_key = ?2",
+                params![RUNTIME_ANNOTATIONS_PROJECTION, state_id.as_bytes()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        value
+            .map(|bytes| {
+                serde_json::from_slice(&bytes).map_err(|error| {
+                    StoreError::InvalidData(format!("invalid state annotation projection: {error}"))
+                })
+            })
+            .transpose()
+            .map(Option::unwrap_or_default)
     }
     pub(crate) fn logical_children(
         &self,
@@ -1344,6 +1368,16 @@ fn apply_runtime_projection(
                 }));
             }
             Ok(())
+        }
+        RuntimeProjection::Star { state, enabled } => {
+            let state_id = parse_hex_uuid(&state.state_id, "state id")?;
+            put_runtime_record(
+                tx,
+                RUNTIME_ANNOTATIONS_PROJECTION,
+                state_id.as_bytes(),
+                enabled,
+                seq,
+            )
         }
         RuntimeProjection::PickedState {
             state,
