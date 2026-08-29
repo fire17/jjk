@@ -517,8 +517,12 @@ mod tests {
     }
     #[test]
     fn secrets_redact_and_handoff_uses_argv() {
+        let secret = SecretBytes::new(vec![42; 32]).unwrap();
+        assert_eq!(format!("{secret:?}"), "SecretBytes([REDACTED])");
         let (_, proof) = WorkspaceLease::acquire(None, req(WorkspaceId::new_v7(), 42)).unwrap();
-        assert!(!format!("{proof:?}").contains("42"));
+        let proof_debug = format!("{proof:?}");
+        assert!(proof_debug.contains("token: \"[REDACTED]\""));
+        assert!(!proof_debug.contains("SecretBytes"));
         let cmd = ResumeCommand {
             program: NativePath::unix(b"jjk".to_vec()).unwrap(),
             arguments: vec![b"$(touch /tmp/no)".to_vec()],
