@@ -3592,8 +3592,12 @@ fn repository_root_token_for_future(common_dir: &Path) -> Result<Vec<u8>, Runtim
 }
 fn repository_root_token(common_dir: &Path) -> Result<Vec<u8>, RuntimeError> {
     let canonical = fs::canonicalize(common_dir).map_err(internal)?;
+    #[cfg(windows)]
+    let canonical_bytes = canonical.to_string_lossy().replace('\\', "/").into_bytes();
+    #[cfg(not(windows))]
+    let canonical_bytes = canonical.as_os_str().as_encoded_bytes().to_vec();
     let mut bytes = b"jjk-safe-space-v1\0".to_vec();
-    bytes.extend(canonical.as_os_str().as_encoded_bytes());
+    bytes.extend(canonical_bytes);
     Ok(Sha256::digest(bytes).to_vec())
 }
 
