@@ -40,7 +40,7 @@ impl Sandbox {
         fs::create_dir_all(&bin).expect("create tool directory");
         fs::create_dir_all(&home).expect("create isolated home");
         fs::create_dir_all(&xdg).expect("create isolated XDG root");
-        install_tool(git, &bin.join(tool_file_name("git")));
+        install_git_tool(git, &bin.join(tool_file_name("git")));
         if let Some(jj) = jj {
             install_tool(jj, &bin.join(tool_file_name("jj")));
         }
@@ -579,23 +579,30 @@ fn tool_file_name(name: &str) -> OsString {
 
 fn install_tool(source: &Path, destination: &Path) {
     #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(source, destination).unwrap_or_else(|error| {
-            panic!(
-                "link {} as {}: {error}",
-                source.display(),
-                destination.display()
-            )
-        });
-    }
-    #[cfg(not(unix))]
-    {
-        fs::copy(source, destination).unwrap_or_else(|error| {
-            panic!(
-                "copy {} as {}: {error}",
-                source.display(),
-                destination.display()
-            )
-        });
-    }
+    std::os::unix::fs::symlink(source, destination).unwrap_or_else(|error| {
+        panic!(
+            "link {} as {}: {error}",
+            source.display(),
+            destination.display()
+        )
+    });
+    #[cfg(windows)]
+    fs::copy(source, destination).unwrap_or_else(|error| {
+        panic!(
+            "copy {} as {}: {error}",
+            source.display(),
+            destination.display()
+        )
+    });
+}
+
+fn install_git_tool(source: &Path, destination: &Path) {
+    #[cfg(unix)]
+    install_tool(source, destination);
+    #[cfg(windows)]
+    fs::write(
+        destination.with_extension("cmd"),
+        format!("@\"{}\" %*\r\n", source.display()),
+    )
+    .unwrap_or_else(|error| panic!("write Git command shim: {error}"));
 }
