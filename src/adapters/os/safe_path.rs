@@ -1,24 +1,21 @@
 //! Race-resistant filesystem publication below caller-selected destinations.
 
-#[cfg(unix)]
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::Read;
 use std::io::{self, Seek, SeekFrom};
-#[cfg(unix)]
-use std::path::Component;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 #[cfg(unix)]
 use rustix::fd::OwnedFd;
 #[cfg(unix)]
 use rustix::fs::{self, AtFlags, Mode, OFlags, RenameFlags};
 
-/// A destination whose parent directories are held open without following symlinks.
+/// A destination whose parent directories have been checked without following symlinks.
 ///
-/// On Unix, publication is relative to the held parent descriptor and uses a
-/// no-replace atomic rename. Other platforms fail closed until an equivalent
-/// directory-handle implementation exists.
+/// Unix publication is relative to a held parent descriptor and uses a no-replace atomic
+/// rename. Windows uses exclusive sibling staging, a no-replace hard link for files, and the
+/// platform's non-replacing directory rename semantics.
 #[cfg(unix)]
 pub(crate) struct SafeDestination {
     parent: OwnedFd,
@@ -28,6 +25,7 @@ pub(crate) struct SafeDestination {
 
 #[cfg(not(unix))]
 pub(crate) struct SafeDestination {
+    parent: PathBuf,
     path: PathBuf,
 }
 
@@ -259,7 +257,6 @@ impl Drop for SafeStagingDirectory {
     }
 }
 
-#[cfg(unix)]
 fn lexical_absolute(path: &Path) -> io::Result<PathBuf> {
     let input = if path.is_absolute() {
         path.to_owned()
@@ -356,11 +353,17 @@ fn invalid(message: &'static str) -> io::Error {
 #[cfg(not(unix))]
 impl SafeDestination {
     pub(crate) fn new(path: &Path) -> io::Result<Self> {
-        let _ = path;
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "secure destination publication is unavailable on this platform",
-        ))
+        let path = lexical_absolute(path)?;
+        if path.file_name().is_none() {
+            return Err(invalid("destination must name a file or directory"));
+        }
+        let parent = path
+            .parent()
+            .ok_or_else(|| invalid("destination must have a parent directory"))?
+            .to_path_buf();
+        create_verified_directory_chain(&parent)?;
+        ensure_path_absent(&path)?;
+        Ok(Self { parent, path })
     }
 
     pub(crate) fn path(&self) -> &Path {
@@ -368,37 +371,83 @@ impl SafeDestination {
     }
 
     pub(crate) fn create_staging_file(&self) -> io::Result<SafeStagingFile> {
+        for nonce in 0_u32..128 {
+            let path = self.parent.join(format!(
+                ".jjk-publish-{}-{nonce}.tmp",
+                uuid::Uuid::now_v7().simple()
+            ));
+            match std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(file) => {
+                    return Ok(SafeStagingFile {
+                        path,
+                        file,
+                        published: false,
+                    });
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
         Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "secure file publication is unavailable on this platform",
+            io::ErrorKind::AlreadyExists,
+            "could not allocate a unique staging file",
         ))
     }
 
-    pub(crate) fn publish(&self, _staging: SafeStagingFile) -> io::Result<PathBuf> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "secure file publication is unavailable on this platform",
-        ))
+    pub(crate) fn publish(&self, mut staging: SafeStagingFile) -> io::Result<PathBuf> {
+        staging.file.sync_all()?;
+        ensure_path_absent(&self.path)?;
+        std::fs::hard_link(&staging.path, &self.path)?;
+        staging.published = true;
+        let _ = std::fs::remove_file(&staging.path);
+        Ok(self.path.clone())
     }
 
     pub(crate) fn create_staging_directory(&self) -> io::Result<SafeStagingDirectory> {
+        for nonce in 0_u32..128 {
+            let path = self.parent.join(format!(
+                ".jjk-publish-{}-{nonce}.dir",
+                uuid::Uuid::now_v7().simple()
+            ));
+            match std::fs::create_dir(&path) {
+                Ok(()) => {
+                    return Ok(SafeStagingDirectory {
+                        path,
+                        published: false,
+                    });
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
         Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "secure directory publication is unavailable on this platform",
+            io::ErrorKind::AlreadyExists,
+            "could not allocate a unique staging directory",
         ))
     }
 
-    pub(crate) fn publish_directory(&self, _staging: SafeStagingDirectory) -> io::Result<PathBuf> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "secure directory publication is unavailable on this platform",
-        ))
+    pub(crate) fn publish_directory(
+        &self,
+        mut staging: SafeStagingDirectory,
+    ) -> io::Result<PathBuf> {
+        staging.external_path_verified()?;
+        ensure_path_absent(&self.path)?;
+        std::fs::rename(&staging.path, &self.path)?;
+        staging.published = true;
+        Ok(self.path.clone())
     }
 }
 
 #[cfg(not(unix))]
 pub(crate) struct SafeStagingFile {
+    path: PathBuf,
     file: File,
+    published: bool,
 }
 
 #[cfg(not(unix))]
@@ -423,23 +472,80 @@ impl SafeStagingFile {
 }
 
 #[cfg(not(unix))]
-pub(crate) struct SafeStagingDirectory;
+impl Drop for SafeStagingFile {
+    fn drop(&mut self) {
+        if !self.published {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+pub(crate) struct SafeStagingDirectory {
+    path: PathBuf,
+    published: bool,
+}
 
 #[cfg(not(unix))]
 impl SafeStagingDirectory {
     pub(crate) fn path(&self) -> io::Result<PathBuf> {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "secure directory publication is unavailable on this platform",
-        ))
+        self.external_path_verified()
     }
 
     pub(crate) fn external_path_verified(&self) -> io::Result<PathBuf> {
-        self.path()
+        let metadata = std::fs::symlink_metadata(&self.path)?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "staging directory path no longer identifies the created directory",
+            ));
+        }
+        Ok(self.path.clone())
     }
 
     pub(crate) fn child_path(&self, child: &str) -> io::Result<PathBuf> {
-        Ok(self.path()?.join(child))
+        Ok(self.external_path_verified()?.join(child))
+    }
+}
+
+#[cfg(not(unix))]
+impl Drop for SafeStagingDirectory {
+    fn drop(&mut self) {
+        if !self.published {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn create_verified_directory_chain(path: &Path) -> io::Result<()> {
+    std::fs::create_dir_all(path)?;
+    let mut current = PathBuf::new();
+    for component in path.components() {
+        current.push(component.as_os_str());
+        let metadata = std::fs::symlink_metadata(&current)?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "destination parent is not a direct directory: {}",
+                    current.display()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn ensure_path_absent(path: &Path) -> io::Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("destination already exists: {}", path.display()),
+        )),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
     }
 }
 
