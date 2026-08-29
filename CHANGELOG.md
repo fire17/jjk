@@ -6,15 +6,19 @@ This project follows semantic versioning.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-29
+
+### Fixed
+
+- Preserved the typed writer-conflict exit on Windows when the locked file also prevents reading its owner receipt.
+
 ## [0.2.0] - 2026-08-29
 
 ### Added
 
 - Added native `star [state]` and `unstar [state]` annotations, including durable JSON state, `current`/`see`/`story` visibility, and idempotent receipts without creating duplicate snapshots.
 
-### Fixed
 
-- Preserved the typed writer-conflict exit on Windows when the locked file also prevents reading its owner receipt.
 
 ## [0.1.2] - 2026-08-29
 
