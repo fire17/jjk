@@ -3,7 +3,6 @@
 #[cfg(unix)]
 use std::ffi::OsString;
 use std::fs::File;
-#[cfg(unix)]
 use std::io::Read;
 use std::io::{self, Seek, SeekFrom};
 #[cfg(unix)]
