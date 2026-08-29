@@ -93,7 +93,10 @@ fn discovery_distinguishes_bare_and_outside_repository() {
     assert!(bare_facts.is_bare);
     assert!(!bare_facts.inside_worktree);
     assert_eq!(bare_facts.worktree_root, None);
-    assert_eq!(bare_facts.git_dir, fs::canonicalize(&bare).unwrap());
+    assert_eq!(
+        fs::canonicalize(&bare_facts.git_dir).unwrap(),
+        fs::canonicalize(&bare).unwrap()
+    );
     assert_eq!(bare_facts.common_dir, bare_facts.git_dir);
 
     let outside = fixture.path().join("outside");
@@ -124,13 +127,20 @@ fn supervised_passthrough_preserves_exit_code() {
 #[test]
 fn broken_jj_degrades_without_affecting_git() {
     let fixture = TempDir::new().unwrap();
-    let shim = fixture.path().join("jj-broken");
     #[cfg(unix)]
-    {
+    let shim = {
         use std::os::unix::fs::PermissionsExt;
+        let shim = fixture.path().join("jj-broken");
         fs::write(&shim, "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'jj 99.0'; exit 0; fi\necho 'broken operation log' >&2\nexit 42\n").unwrap();
         fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
-    }
+        shim
+    };
+    #[cfg(windows)]
+    let shim = {
+        let shim = fixture.path().join("jj-broken.cmd");
+        fs::write(&shim, "@echo off\r\nif \"%1\"==\"--version\" (echo jj 99.0& exit /b 0)\r\necho broken operation log 1>&2\r\nexit /b 42\r\n").unwrap();
+        shim
+    };
     let result = probe(&OsProcess, &shim, fixture.path());
     assert!(
         matches!(result, JjCapabilities::Degraded { version: Some(_), diagnostic } if diagnostic.contains("broken operation log"))
