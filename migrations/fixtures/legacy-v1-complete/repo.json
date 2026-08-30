@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "safeSpaceId": "safe-complete",
+  "createdAt": "2025-01-01T00:00:00Z",
+  "updatedAt": "2025-01-02T00:00:00Z",
+  "settings": { "watchDebounceMs": 100, "autoStatePrefix": "auto", "showWorkspaceSnapshotsInGit": false },
+  "states": [{
+    "id": "green001", "kind": "save", "label": "green", "description": "known good",
+    "createdAt": "2025-01-01T01:00:00Z", "branch": "main", "lane": "main", "continuationBranch": null,
+    "commit": "1111111111111111111111111111111111111111", "parentCommit": null, "parentStateId": null,
+    "tags": ["star"], "stats": { "changedFiles": 1, "insertedLines": 1, "deletedLines": 0 },
+    "metadata": { "gitCommit": "1111111111111111111111111111111111111111", "message": "green" }
+  }],
+  "lanes": { "main": { "name": "main", "branch": "main", "baseRef": "main", "createdAt": "2025-01-01T00:00:00Z", "updatedAt": "2025-01-02T00:00:00Z", "currentStateId": "green001" } },
+  "branchLaneMap": { "main": "main" },
+  "allowMainBranchSave": true,
+  "returnContext": { "stateId": "green001", "sourceBranch": "main", "sourceLane": "main" },
+  "currentStateHistory": { "entries": ["green001", "green001"], "index": 1 },
+  "timeshifts": [{ "id": "time0001", "label": "shell", "createdAt": "2025-01-02T00:00:00Z", "branch": "main", "lane": "main", "stateId": "green001", "relativeCwd": ".", "env": { "TERM": "xterm" } }],
+  "freezes": []
+}

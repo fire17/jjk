@@ -1,0 +1,36 @@
+class Jjk < Formula
+  desc "State-first development for humans and agents"
+  homepage "https://github.com/fire17/jjk"
+  version "@VERSION@"
+  license "MIT"
+
+  on_macos do
+    if Hardware::CPU.arm?
+      url "https://github.com/fire17/jjk/releases/download/v@VERSION@/jjk-v@VERSION@-darwin-arm64.tar.gz"
+      sha256 "@DARWIN_ARM64_SHA256@"
+    else
+      url "https://github.com/fire17/jjk/releases/download/v@VERSION@/jjk-v@VERSION@-darwin-x64.tar.gz"
+      sha256 "@DARWIN_X64_SHA256@"
+    end
+  end
+
+  on_linux do
+    if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
+      url "https://github.com/fire17/jjk/releases/download/v@VERSION@/jjk-v@VERSION@-linux-arm64.tar.gz"
+      sha256 "@LINUX_ARM64_SHA256@"
+    else
+      url "https://github.com/fire17/jjk/releases/download/v@VERSION@/jjk-v@VERSION@-linux-x64.tar.gz"
+      sha256 "@LINUX_X64_SHA256@"
+    end
+  end
+
+  depends_on "git"
+
+  def install
+    bin.install Dir["jjk-v#{version}-*/jjk"].fetch(0)
+  end
+
+  test do
+    assert_match "jjk #{version}", shell_output("#{bin}/jjk --version")
+  end
+end

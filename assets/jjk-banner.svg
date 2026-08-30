@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="360" viewBox="0 0 1280 360" role="img" aria-label="JJK — state-first development over Git">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07111f"/>
+      <stop offset="0.55" stop-color="#0d1f32"/>
+      <stop offset="1" stop-color="#152238"/>
+    </linearGradient>
+    <linearGradient id="line" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#60a5fa"/>
+      <stop offset="1" stop-color="#6ee7b7"/>
+    </linearGradient>
+    <radialGradient id="glow">
+      <stop offset="0" stop-color="#60a5fa" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#60a5fa" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1280" height="360" rx="24" fill="url(#bg)"/>
+  <circle cx="1110" cy="55" r="250" fill="url(#glow)"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M825 254 C875 254 875 106 925 106 S975 180 1025 180 S1075 82 1125 82" stroke="#334b67" stroke-width="4"/>
+    <path d="M825 254 C900 254 900 290 975 290 S1050 236 1125 236" stroke="#334b67" stroke-width="4"/>
+    <path d="M825 254 C900 254 900 180 1025 180" stroke="url(#line)" stroke-width="5"/>
+  </g>
+  <g fill="#0b1727" stroke-width="4">
+    <circle cx="825" cy="254" r="13" stroke="#60a5fa"/>
+    <circle cx="925" cy="106" r="13" stroke="#6ee7b7"/>
+    <circle cx="1025" cy="180" r="15" stroke="#6ee7b7"/>
+    <circle cx="1125" cy="82" r="13" stroke="#60a5fa"/>
+    <circle cx="975" cy="290" r="13" stroke="#60a5fa"/>
+    <circle cx="1125" cy="236" r="13" stroke="#6ee7b7"/>
+  </g>
+  <text x="86" y="135" fill="#f8fafc" font-family="Verdana, Geneva, sans-serif" font-size="82" font-weight="700" letter-spacing="7">JJK</text>
+  <rect x="88" y="161" width="570" height="4" rx="2" fill="url(#line)"/>
+  <text x="88" y="214" fill="#dbeafe" font-family="Verdana, Geneva, sans-serif" font-size="25">STATE-FIRST DEVELOPMENT OVER GIT</text>
+  <text x="88" y="265" fill="#94a3b8" font-family="Verdana, Geneva, sans-serif" font-size="18">Meaningful states · preserved futures · typed handoffs</text>
+  <text x="88" y="304" fill="#6ee7b7" font-family="Verdana, Geneva, sans-serif" font-size="15" letter-spacing="2">GIT REMAINS THE SUBSTRATE</text>
+</svg>
