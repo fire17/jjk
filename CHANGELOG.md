@@ -6,6 +6,12 @@ This project follows semantic versioning.
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-08-30
+
+### Fixed
+
+- Windows: restores failed with `Unable to create '\\?\C:\...\restore-….index.lock': Invalid argument` in 0.4.2, which handed Git a canonicalized (verbatim-prefixed) worktree path. Canonical paths are now used only to recognise the invoking directory; Git receives the original spelling.
+
 ## [0.4.2] - 2026-08-30
 
 ### Fixed
