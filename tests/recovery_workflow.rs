@@ -239,6 +239,13 @@ fn repository_fingerprint(fixture: &Harness, cwd: &Path) -> RepositoryFingerprin
             "--format=%(refname)%00%(objectname)%00%(symref)%00",
         ],
     );
+    // The `jjk/trail` mirror branch is derived from the current state by design (it moves on
+    // every navigation and undo/redo), so it is not part of the restorable surface.
+    let refs = refs
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.starts_with(b"refs/heads/jjk/trail\0"))
+        .flat_map(|line| line.iter().copied().chain(std::iter::once(b'\n')))
+        .collect::<Vec<u8>>();
     let symbolic = fixture.run_git(cwd, &["symbolic-ref", "-q", "HEAD"]);
     let head_ref = match symbolic.status.code() {
         Some(0) => Some(symbolic.stdout),

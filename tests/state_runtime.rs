@@ -947,10 +947,12 @@ fn snapshots_survive_git_gc_and_keep_the_control_database_small() {
     // No retention refs or other user-visible ref changes beyond the state refs.
     let refs_after = String::from_utf8(successful(root, git, &["for-each-ref"]).stdout).unwrap();
     assert!(!refs_after.contains("refs/jjk/keep"), "{refs_after}");
+    // One state ref per capture plus the `jjk/trail` mirror branch.
     assert_eq!(
         refs_after.lines().count(),
-        String::from_utf8(refs_before).unwrap().lines().count() + ids.len()
+        String::from_utf8(refs_before).unwrap().lines().count() + ids.len() + 1
     );
+    assert!(refs_after.contains("refs/heads/jjk/trail"), "{refs_after}");
     // Aggressive maintenance must not break navigation: snapshot objects are private.
     successful(root, git, &["gc", "-q", "--prune=now", "--aggressive"]);
     successful(root, git, &["fsck", "--full", "--strict"]);
@@ -1292,4 +1294,90 @@ fn navigation_from_a_subdirectory_keeps_that_directory_alive() {
         fs::read_to_string(leaf_dir.join("leaf.txt")).expect("read leaf"),
         "purple\n"
     );
+}
+
+#[test]
+fn trail_branch_mirrors_the_current_state_and_respects_config_and_ownership() {
+    let directory = TempDir::new().expect("tempdir");
+    let root = directory.path();
+    let git = std::path::Path::new("git");
+    let jjk = assert_cmd::cargo::cargo_bin!("jjk");
+    init_repository(root, git);
+    fs::write(root.join("app.txt"), "base\n").expect("write base");
+    successful(root, git, &["add", "-A"]);
+    successful(
+        root,
+        git,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "commit",
+            "-qm",
+            "initial commit",
+        ],
+    );
+    successful(root, &jjk, &["setup", "--json"]);
+
+    fs::write(root.join("app.txt"), "v1\n").expect("write v1");
+    let green = json(&successful(root, &jjk, &["save", "--json", "--", "green"]));
+    fs::write(root.join("app.txt"), "v2\n").expect("write v2");
+    let purple = json(&successful(root, &jjk, &["step", "--json", "--", "purple"]));
+
+    let trail = |expected: &Value| {
+        let head =
+            String::from_utf8(successful(root, git, &["rev-parse", "refs/heads/jjk/trail"]).stdout)
+                .expect("utf8");
+        assert_eq!(head.trim(), expected["commit"].as_str().expect("commit"));
+    };
+    trail(&purple);
+    let log = String::from_utf8(successful(root, git, &["log", "jjk/trail", "--format=%s"]).stdout)
+        .expect("utf8");
+    assert_eq!(log.trim(), "purple\ngreen\ninitial commit");
+
+    successful(
+        root,
+        &jjk,
+        &["return", green["state_id"].as_str().expect("id"), "--json"],
+    );
+    trail(&green);
+    successful(root, &jjk, &["undo", "--json"]);
+    trail(&purple);
+
+    // Disabled: the mirror stays put; re-enabled: the next operation resyncs.
+    successful(root, git, &["config", "jjk.trail", "false"]);
+    fs::write(root.join("app.txt"), "v3\n").expect("write v3");
+    successful(root, &jjk, &["step", "--json", "--", "while disabled"]);
+    trail(&purple);
+    successful(root, git, &["config", "jjk.trail", "true"]);
+    fs::write(root.join("app.txt"), "v4\n").expect("write v4");
+    let resynced = json(&successful(
+        root,
+        &jjk,
+        &["step", "--json", "--", "resynced"],
+    ));
+    trail(&resynced);
+
+    // A foreign branch of the same name is never moved; the operation still succeeds.
+    successful(root, git, &["config", "--unset", "jjk.trail"]);
+    let base =
+        String::from_utf8(successful(root, git, &["rev-parse", "HEAD"]).stdout).expect("utf8");
+    successful(
+        root,
+        git,
+        &["update-ref", "refs/heads/jjk/trail", base.trim()],
+    );
+    fs::write(root.join("app.txt"), "v5\n").expect("write v5");
+    let output = run(root, &jjk, &["step", "--", "foreign guard"]);
+    assert_eq!(output.status.code(), Some(0));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("does not point at a JJK state"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let head =
+        String::from_utf8(successful(root, git, &["rev-parse", "refs/heads/jjk/trail"]).stdout)
+            .expect("utf8");
+    assert_eq!(head.trim(), base.trim());
 }

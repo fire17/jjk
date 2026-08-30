@@ -671,6 +671,7 @@ fn capture(name: &str, args: &[OsString], cwd: &Path) -> Result<i32, RuntimeErro
             label,
         },
     )?;
+    sync_trail_branch(&mut context, cwd);
     Ok(0)
 }
 fn current(args: &[OsString], cwd: &Path) -> Result<i32, RuntimeError> {
@@ -897,6 +898,7 @@ fn restore(args: &[OsString], cwd: &Path) -> Result<i32, RuntimeError> {
             commit: state.git_oid,
         },
     )?;
+    sync_trail_branch(&mut context, cwd);
     Ok(0)
 }
 
@@ -1039,6 +1041,7 @@ fn history_navigation(name: &str, args: &[OsString], cwd: &Path) -> Result<i32, 
             history_length: before.entries.len(),
         },
     )?;
+    sync_trail_branch(&mut context, cwd);
     Ok(0)
 }
 fn pick(args: &[OsString], cwd: &Path) -> Result<i32, RuntimeError> {
@@ -1240,6 +1243,7 @@ fn pick(args: &[OsString], cwd: &Path) -> Result<i32, RuntimeError> {
             )
             .map_err(internal)?;
             emit(format, &result)?;
+            sync_trail_branch(&mut context, cwd);
             Ok(0)
         }
         Err(CoordinationError::ConflictPaused { operation, .. }) => {
@@ -1511,6 +1515,7 @@ fn control_history(name: &str, args: &[OsString], cwd: &Path) -> Result<i32, Run
             to_cursor: plan.to_cursor,
         },
     )?;
+    sync_trail_branch(&mut context, cwd);
     Ok(0)
 }
 
@@ -2415,6 +2420,7 @@ fn activate_state(
             commit: state.git_oid,
         },
     )?;
+    sync_trail_branch(context, cwd);
     Ok(0)
 }
 
@@ -3250,6 +3256,92 @@ pub(crate) fn capture_runtime_git_snapshot(
     capture_runtime_git_snapshot_with(git, cwd, false)
 }
 
+/// The mirror branch that lets the JJK trail read as an ordinary branch.
+const TRAIL_REF: &str = "refs/heads/jjk/trail";
+const TRAIL_BRANCH: &str = "jjk/trail";
+
+/// Points `refs/heads/jjk/trail` at the current state's commit so ongoing JJK work reads as a
+/// beautifully tracked branch through plain Git (`git log jjk/trail`, hosting UIs). On by
+/// default; `git config jjk.trail false` restores the pre-0.5 behavior. Best-effort by design:
+/// the operation is already committed, so a mirror failure warns and never fails the command.
+/// The branch is JJK-owned: it is never captured into or restored from control snapshots, and
+/// it is left untouched — with a warning — when it is checked out anywhere or when an existing
+/// branch of that name does not point at a JJK state commit.
+fn sync_trail_branch(context: &mut RuntimeContext, cwd: &Path) {
+    if let Err(error) = try_sync_trail_branch(context, cwd) {
+        eprintln!("jjk: warning: jjk/trail mirror branch not updated: {error}");
+    }
+}
+
+fn try_sync_trail_branch(context: &mut RuntimeContext, cwd: &Path) -> Result<(), RuntimeError> {
+    let git = &context.git;
+    let config = git
+        .run(cwd, ["config", "--type=bool", "--get", "jjk.trail"])
+        .map_err(git_error)?;
+    match config.exit_code {
+        0 if String::from_utf8_lossy(&config.stdout).trim() == "false" => return Ok(()),
+        0 | 1 => {}
+        _ => {
+            return Err(RuntimeError::Unavailable(
+                String::from_utf8_lossy(&config.stderr).trim().into(),
+            ));
+        }
+    }
+    let Some(current) = context
+        .store
+        .current_state_row(context.workspace_id)
+        .map_err(internal)?
+    else {
+        return Ok(());
+    };
+    let existing = observation_optional(git, cwd, ["rev-parse", "-q", "--verify", TRAIL_REF])?;
+    if existing.as_deref() == Some(current.git_oid.as_str()) {
+        return Ok(());
+    }
+    if let Some(existing) = &existing {
+        let state_commits = git
+            .required(
+                cwd,
+                ["for-each-ref", "refs/jjk/states", "--format=%(objectname)"],
+            )
+            .map_err(git_error)?;
+        if !String::from_utf8_lossy(&state_commits)
+            .lines()
+            .any(|line| line.trim() == existing)
+        {
+            return Err(RuntimeError::Unavailable(format!(
+                "branch {TRAIL_BRANCH} exists but does not point at a JJK state; rename it or set `git config jjk.trail false`"
+            )));
+        }
+        let checkout = required_output(
+            git.run(
+                cwd,
+                observation_args(
+                    ["branch", "--list", TRAIL_BRANCH, "--format=%(worktreepath)"]
+                        .map(OsString::from),
+                ),
+            )
+            .map_err(git_error)?,
+        )?;
+        if !checkout.trim().is_empty() {
+            return Err(RuntimeError::Unavailable(format!(
+                "branch {TRAIL_BRANCH} is checked out at {}; not moving it",
+                checkout.trim()
+            )));
+        }
+    }
+    required_os(
+        git,
+        cwd,
+        [
+            OsString::from("update-ref"),
+            OsString::from(TRAIL_REF),
+            OsString::from(&current.git_oid),
+        ],
+    )?;
+    Ok(())
+}
+
 /// Every ref with its target and symbolic binding, sorted by name.
 pub(crate) fn capture_git_refs(
     git: &GitCli<OsProcess>,
@@ -3275,6 +3367,10 @@ pub(crate) fn capture_git_refs(
             return Err(RuntimeError::Internal(
                 "Git emitted malformed reference snapshot".into(),
             ));
+        }
+        if fields[0] == TRAIL_REF.as_bytes() {
+            // The mirror branch is JJK-owned and derived; snapshots neither store nor manage it.
+            continue;
         }
         refs.push(RuntimeGitRef {
             name: fields[0].to_vec(),

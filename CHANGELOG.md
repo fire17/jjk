@@ -6,6 +6,12 @@ This project follows semantic versioning.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-30
+
+### Added
+
+- The `jjk/trail` mirror branch: after every capture, navigation, undo/redo, and pick, `refs/heads/jjk/trail` points at the current state's commit, so the JJK trail reads as an ordinary branch through plain Git (`git log jjk/trail`, `git branch -v`, hosting UIs). On by default; `git config jjk.trail false` restores the previous behavior, and setting it back to `true` resyncs on the next operation. The mirror is JJK-owned and best-effort: a failure to move it warns without failing the operation, control snapshots neither capture nor restore it, and it is left untouched — with a warning — when it is checked out in any worktree or when an existing branch of that name does not point at a JJK state commit.
+
 ## [0.4.3] - 2026-08-30
 
 ### Fixed

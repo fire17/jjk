@@ -204,7 +204,10 @@ fn repository_fingerprint(sandbox: &Sandbox, cwd: &Path) -> RepositoryFingerprin
     );
     let non_jjk_refs = refs
         .split_inclusive(|byte| *byte == b'\n')
-        .filter(|line| !line.starts_with(b"refs/jjk/"))
+        .filter(|line| {
+            // `refs/jjk/*` and the derived `jjk/trail` mirror branch are JJK-owned surfaces.
+            !line.starts_with(b"refs/jjk/") && !line.starts_with(b"refs/heads/jjk/trail\0")
+        })
         .flat_map(|line| line.iter().copied())
         .collect();
     let worktree_command = |args: &[&str]| {

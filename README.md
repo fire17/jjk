@@ -101,6 +101,15 @@ jjk rebase --onto main feature~3 feature   # real git rebase
 jjk git -- status --porcelain=v1           # explicit passthrough escape
 ```
 
+And the reverse lens holds too: every `save`/`step`/`nice` is a real Git commit with your message and a real parent chain, kept under `refs/jjk/states/<id>`, and the **`jjk/trail`** mirror branch follows the current state — so ongoing JJK work reads as an ordinary, well-kept branch in `git log jjk/trail`, `git branch -v`, and hosting UIs. Your own branches never move.
+
+```sh
+git log jjk/trail --oneline        # the trail as plain Git history
+git config jjk.trail false         # opt out (pre-0.5 behavior); true re-enables and resyncs
+```
+
+The mirror is JJK-owned and best-effort: it is never captured into control snapshots, and it is left alone — with a warning — if it is checked out anywhere or if a branch of that name is not pointing at a JJK state.
+
 <details>
 <summary><b>Parallel-agent protocol</b></summary>
 
@@ -209,7 +218,7 @@ curl -fsSL https://raw.githubusercontent.com/fire17/jjk/main/scripts/install.sh 
 Pin version and destination:
 
 ```sh
-JJK_VERSION=v0.4.3 JJK_INSTALL_DIR="$HOME/.local/bin" \
+JJK_VERSION=v0.5.0 JJK_INSTALL_DIR="$HOME/.local/bin" \
   sh scripts/install.sh
 ```
 
@@ -218,7 +227,7 @@ The installer downloads the matching archive and `.sha256`, verifies it, and ins
 ### From source
 
 ```sh
-cargo install --locked --git https://github.com/fire17/jjk --tag v0.4.3
+cargo install --locked --git https://github.com/fire17/jjk --tag v0.5.0
 ```
 
 Requires Rust 1.85+ and Git at runtime.
