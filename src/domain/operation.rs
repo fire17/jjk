@@ -1,0 +1,316 @@
+use super::{
+    capability::CapabilityKind,
+    id::{DeltaId, OperationId, StateId, WorkspaceId},
+    policy::RiskLevel,
+    provenance::{ArtifactRef, GitObjectId, Hash256, NativePath, RepositoryFingerprint},
+};
+use crate::error::DomainError;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use std::{fmt, str::FromStr};
+
+#[derive(
+    Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationPhase {
+    Prepared,
+    Applying,
+    AwaitingResolution,
+    Verifying,
+    Committed,
+    Aborting,
+    Aborted,
+    RepairRequired,
+}
+impl OperationPhase {
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Committed | Self::Aborted)
+    }
+    pub fn transition(self, event: OperationTransition) -> Result<Self, DomainError> {
+        use OperationPhase as P;
+        use OperationTransition as T;
+        match (self, event) {
+            (P::Prepared, T::ApplyStarted) => Ok(P::Applying),
+            (P::Applying, T::EffectObserved) => Ok(P::Applying),
+            (P::Applying, T::ConflictPaused) => Ok(P::AwaitingResolution),
+            (P::AwaitingResolution, T::RepairResumedApplying)
+            | (P::RepairRequired, T::RepairResumedApplying) => Ok(P::Applying),
+            (P::RepairRequired, T::RepairResumedVerifying) => Ok(P::Verifying),
+            (P::Applying, T::VerificationStarted) => Ok(P::Verifying),
+            (P::Verifying, T::Committed) => Ok(P::Committed),
+            (
+                P::Prepared | P::Applying | P::AwaitingResolution | P::RepairRequired,
+                T::AbortStarted,
+            ) => Ok(P::Aborting),
+            (P::Aborting, T::Aborted) => Ok(P::Aborted),
+            (phase, T::RepairRequired) if !phase.is_terminal() => Ok(P::RepairRequired),
+            _ => Err(DomainError::IllegalOperationTransition {
+                from: self.to_string(),
+                transition: format!("{event:?}"),
+            }),
+        }
+    }
+}
+impl fmt::Display for OperationPhase {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Prepared => "prepared",
+            Self::Applying => "applying",
+            Self::AwaitingResolution => "awaiting_resolution",
+            Self::Verifying => "verifying",
+            Self::Committed => "committed",
+            Self::Aborting => "aborting",
+            Self::Aborted => "aborted",
+            Self::RepairRequired => "repair_required",
+        })
+    }
+}
+impl FromStr for OperationPhase {
+    type Err = DomainError;
+    fn from_str(v: &str) -> Result<Self, Self::Err> {
+        match v {
+            "prepared" => Ok(Self::Prepared),
+            "applying" => Ok(Self::Applying),
+            "awaiting_resolution" => Ok(Self::AwaitingResolution),
+            "verifying" => Ok(Self::Verifying),
+            "committed" => Ok(Self::Committed),
+            "aborting" => Ok(Self::Aborting),
+            "aborted" => Ok(Self::Aborted),
+            "repair_required" => Ok(Self::RepairRequired),
+            _ => Err(DomainError::InvalidValue {
+                kind: "operation phase",
+                reason: v.into(),
+            }),
+        }
+    }
+}
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum OperationTransition {
+    ApplyStarted,
+    EffectObserved,
+    ConflictPaused,
+    RepairResumedApplying,
+    RepairResumedVerifying,
+    VerificationStarted,
+    Committed,
+    AbortStarted,
+    Aborted,
+    RepairRequired,
+}
+
+#[derive(
+    Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, JsonSchema,
+)]
+pub struct EffectId {
+    pub operation_id: OperationId,
+    pub ordinal: u32,
+}
+impl fmt::Display for EffectId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.operation_id, self.ordinal)
+    }
+}
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum Effect {
+    GitRefCas {
+        ref_name: Vec<u8>,
+        expected: Option<GitObjectId>,
+        new: GitObjectId,
+    },
+    CreateTree {
+        entries_digest: Hash256,
+    },
+    CreateCommit {
+        tree: GitObjectId,
+        parents: Vec<GitObjectId>,
+        message: String,
+    },
+    WorktreeMaterialize {
+        workspace_id: WorkspaceId,
+        state_id: StateId,
+    },
+    ApplyExactDelta {
+        delta_id: DeltaId,
+        source_parent: StateId,
+        source_state: StateId,
+        target_base: StateId,
+    },
+    FileAtomicWrite {
+        path: NativePath,
+        expected: Option<Hash256>,
+        content: ArtifactRef,
+    },
+    SemanticFacts {
+        event_types: Vec<String>,
+    },
+    SqliteTransaction {
+        facts_digest: Hash256,
+    },
+}
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PlannedEffect {
+    pub id: EffectId,
+    pub effect: Effect,
+    pub expected_postcondition: Hash256,
+    pub compensation: Option<Box<Effect>>,
+}
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct OperationPlan {
+    pub id: OperationId,
+    pub command: String,
+    pub request_hash: Hash256,
+    pub precondition: RepositoryFingerprint,
+    pub required_capabilities: Vec<CapabilityKind>,
+    pub effects: Vec<PlannedEffect>,
+    pub recovery_artifact: Option<ArtifactRef>,
+    pub risk: RiskLevel,
+    pub digest: Hash256,
+}
+impl OperationPlan {
+    pub fn new(
+        id: OperationId,
+        command: impl Into<String>,
+        request_hash: Hash256,
+        precondition: RepositoryFingerprint,
+        required_capabilities: Vec<CapabilityKind>,
+        effects: Vec<PlannedEffect>,
+        recovery_artifact: Option<ArtifactRef>,
+        risk: RiskLevel,
+    ) -> Result<Self, DomainError> {
+        if effects
+            .iter()
+            .enumerate()
+            .any(|(n, e)| e.id.operation_id != id || e.id.ordinal != n as u32)
+        {
+            return Err(DomainError::NonContiguousEffects);
+        }
+        let mut plan = Self {
+            id,
+            command: command.into(),
+            request_hash,
+            precondition,
+            required_capabilities,
+            effects,
+            recovery_artifact,
+            risk,
+            digest: Hash256::ZERO,
+        };
+        plan.digest = Hash256::digest(
+            &serde_json::to_vec(&(
+                plan.id,
+                &plan.command,
+                plan.request_hash,
+                &plan.precondition,
+                &plan.required_capabilities,
+                &plan.effects,
+                &plan.recovery_artifact,
+                plan.risk,
+            ))
+            .expect("serialize plan"),
+        );
+        Ok(plan)
+    }
+}
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReceiptStatus {
+    Observed,
+    NoOp,
+    Partial,
+    Failed,
+    Reversed,
+}
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct EffectReceipt {
+    pub effect_id: EffectId,
+    pub status: ReceiptStatus,
+    pub before: Hash256,
+    pub after: Hash256,
+    pub details: Vec<(String, String)>,
+}
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct OperationReceipt {
+    pub operation_id: OperationId,
+    pub phase: OperationPhase,
+    pub before: RepositoryFingerprint,
+    pub after: Option<RepositoryFingerprint>,
+    pub effects: Vec<EffectReceipt>,
+    pub verification: Option<bool>,
+    pub warnings: Vec<String>,
+    pub recovery_instruction: Option<String>,
+}
+/// Classification produced by re-inspecting an interrupted effect.
+#[derive(
+    Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecoveryClassification {
+    NotApplied,
+    AppliedExactly,
+    AppliedThenAdvanced,
+    ConflictPaused,
+    Diverged,
+    Uninspectable,
+}
+
+/// Safe next action selected from observed recovery facts.
+#[derive(
+    Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecoveryAction {
+    CompleteForward,
+    VerifyThenCommit,
+    CompensateByCas,
+    AwaitResolution,
+    StopForRepair,
+}
+
+/// Auditable recovery decision; classification and action are kept distinct.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct RecoveryDecision {
+    pub effect_id: EffectId,
+    pub classification: RecoveryClassification,
+    pub action: RecoveryAction,
+    pub observed_digest: Option<Hash256>,
+    pub reason: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn operation_phase_validity() {
+        assert_eq!(
+            OperationPhase::Prepared
+                .transition(OperationTransition::ApplyStarted)
+                .unwrap(),
+            OperationPhase::Applying
+        );
+        assert_eq!(
+            OperationPhase::Applying
+                .transition(OperationTransition::VerificationStarted)
+                .unwrap(),
+            OperationPhase::Verifying
+        );
+        assert_eq!(
+            OperationPhase::Verifying
+                .transition(OperationTransition::Committed)
+                .unwrap(),
+            OperationPhase::Committed
+        );
+        assert!(
+            OperationPhase::Committed
+                .transition(OperationTransition::AbortStarted)
+                .is_err()
+        );
+        assert!(
+            OperationPhase::Prepared
+                .transition(OperationTransition::Committed)
+                .is_err()
+        );
+    }
+}

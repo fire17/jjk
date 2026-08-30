@@ -1,0 +1,114 @@
+[package]
+name = "jjk"
+version = "0.3.0"
+edition = "2024"
+rust-version = "1.85"
+description = "State-first development for humans and agents"
+license = "MIT"
+repository = "https://github.com/fire17/jjk"
+keywords = ["git", "jujutsu", "version-control", "developer-tools"]
+categories = ["command-line-utilities", "development-tools"]
+default-run = "jjk"
+readme = "README.md"
+include = [
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/src/**",
+    "/migrations/**",
+    "/scripts/*.sh",
+    "/assets/jjk-banner.svg",
+    "/LICENSE",
+    "/CONTRACTS.md",
+    "/ARCHITECTURE.md",
+    "/README.md",
+    "/CHANGELOG.md",
+]
+
+[lib]
+name = "jjk"
+path = "src/lib.rs"
+
+[[bin]]
+name = "jjk"
+path = "src/main.rs"
+
+[features]
+default = ["sqlite-bundled"]
+sqlite-bundled = ["rusqlite/bundled"]
+jj = []
+
+[dependencies]
+anyhow = "1.0"
+base64 = "0.22"
+blake3 = "1.8"
+clap = { version = "4.5", features = ["derive", "env", "wrap_help"] }
+fs2 = "0.4"
+hex = "0.4"
+libc = "0.2"
+rusqlite = { version = "0.37", default-features = false, features = ["backup", "hooks", "modern_sqlite", "serialize", "uuid"] }
+rustix = { version = "1.1", default-features = false, features = ["std", "fs"] }
+schemars = { version = "1.0", features = ["uuid1"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+thiserror = "2.0"
+time = { version = "0.3", features = ["formatting", "parsing", "serde"] }
+uuid = { version = "1.18", features = ["serde", "v7"] }
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+proptest = "1.7"
+tempfile = "3.21"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "allow"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+too_many_lines = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+needless_pass_by_value = "allow"
+similar_names = "allow"
+unnested_or_patterns = "allow"
+doc_markdown = "allow"
+semicolon_if_nothing_returned = "allow"
+large_enum_variant = "allow"
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"
+cast_possible_truncation = "allow"
+items_after_statements = "allow"
+type_complexity = "allow"
+too_many_arguments = "allow"
+result_large_err = "allow"
+wildcard_imports = "allow"
+match_same_arms = "allow"
+map_unwrap_or = "allow"
+unnecessary_wraps = "allow"
+used_underscore_binding = "allow"
+single_match_else = "allow"
+multiple_crate_versions = "allow"
+single_char_add_str = "allow"
+ignored_unit_patterns = "allow"
+items_after_test_module = "allow"
+uninlined_format_args = "allow"
+assigning_clones = "allow"
+suspicious_open_options = "allow"
+needless_continue = "allow"
+large_stack_arrays = "allow"
+needless_question_mark = "allow"
+default_trait_access = "allow"
+needless_borrow = "allow"
+needless_borrows_for_generic_args = "allow"
+redundant_closure_for_method_calls = "allow"
