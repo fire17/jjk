@@ -6,6 +6,14 @@ This project follows semantic versioning.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-30
+
+### Fixed
+
+- Navigation (`return`, `up`, `down`, `back`, `forward`, `undo`, `redo`) works in the ordinary JJK flow again: commit, edit without `git add`, capture, navigate. 0.4.0 refused every such move ("workspace or index differs from the current JJK state") because the index, still at the last commit, differed from the worktree. The index may now lag the worktree when it is exactly the index the current state captured — a return brings it back, so nothing is lost. Content the index alone holds (staged, then overwritten in the worktree, never captured) still blocks navigation.
+- Index comparisons judge entries (mode, object, stage, path), not file bytes: `git status`, `git diff`, and editors rewrite the index file for stat-cache refreshes, which made captured indexes look changed and blocked the next move.
+- Nested repositories never break captures or restores. `save`/`step`/`nice` and control snapshots skip untracked embedded checkouts (Git refuses one without a commit and would otherwise record it as a gitlink); gitlinks already in the index keep Git's semantics but are never deleted or written by a restore, which previously failed with "Operation not permitted" and left the operation in repair.
+
 ## [0.4.0] - 2026-08-30
 
 ### Changed

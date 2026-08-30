@@ -558,10 +558,7 @@ fn capture(name: &str, args: &[OsString], cwd: &Path) -> Result<i32, RuntimeErro
                         .map_err(git_error)?,
                 )?;
             }
-            required_output(
-                git.run_with_env(cwd, ["add", "-A"], env.clone())
-                    .map_err(git_error)?,
-            )?;
+            add_all_excluding_nested(git, cwd, env.clone())?;
             let tree = required_output(
                 git.run_with_env(cwd, ["write-tree"], env)
                     .map_err(git_error)?,
@@ -852,7 +849,8 @@ fn restore(args: &[OsString], cwd: &Path) -> Result<i32, RuntimeError> {
         .store
         .current_state_row(context.workspace_id)
         .map_err(internal)?;
-    if !workspace_matches_state(&context.git, cwd, current.as_ref())? {
+    let captured = captured_snapshot(&context, current.as_ref())?;
+    if !workspace_matches_state(&context.git, cwd, current.as_ref(), captured.as_ref())? {
         return Err(RuntimeError::Unavailable(
             "return unavailable because the workspace or index differs from the current JJK state"
                 .into(),
@@ -910,7 +908,8 @@ fn traverse(name: &str, args: &[OsString], cwd: &Path) -> Result<i32, RuntimeErr
         .current_state_row(context.workspace_id)
         .map_err(internal)?
         .ok_or_else(|| RuntimeError::Unavailable("no current JJK state exists".into()))?;
-    if !workspace_matches_state(&context.git, cwd, Some(&current))? {
+    let captured = captured_snapshot(&context, Some(&current))?;
+    if !workspace_matches_state(&context.git, cwd, Some(&current), captured.as_ref())? {
         return Err(RuntimeError::Unavailable(format!(
             "refusing {name} because the worktree or index differs from the current JJK state"
         )));
@@ -957,7 +956,8 @@ fn history_navigation(name: &str, args: &[OsString], cwd: &Path) -> Result<i32, 
         .current_state_row(context.workspace_id)
         .map_err(internal)?
         .ok_or_else(|| RuntimeError::Unavailable("no current JJK state exists".into()))?;
-    if !workspace_matches_state(&context.git, cwd, Some(&current))? {
+    let captured = captured_snapshot(&context, Some(&current))?;
+    if !workspace_matches_state(&context.git, cwd, Some(&current), captured.as_ref())? {
         return Err(RuntimeError::Unavailable(format!(
             "refusing {name} because the worktree or index differs from the current JJK state"
         )));
@@ -1445,7 +1445,8 @@ fn control_history(name: &str, args: &[OsString], cwd: &Path) -> Result<i32, Run
         .store
         .current_state_row(context.workspace_id)
         .map_err(internal)?;
-    if !workspace_matches_state(&context.git, cwd, current.as_ref())? {
+    let captured = captured_snapshot(&context, current.as_ref())?;
+    if !workspace_matches_state(&context.git, cwd, current.as_ref(), captured.as_ref())? {
         return Err(RuntimeError::Unavailable(format!(
             "refusing {name} because the worktree or index differs from current JJK control state"
         )));
@@ -2481,7 +2482,7 @@ fn execute_activation(
         Ok(
             observation_optional(git, cwd, ["rev-parse", "--verify", &state_ref])?
                 == Some(target_oid.clone())
-                && workspace_matches_state(git, cwd, Some(state))?,
+                && workspace_matches_state(git, cwd, Some(state), None)?,
         )
     };
     let workspace_id = context.workspace_id;
@@ -3485,6 +3486,63 @@ fn hash_object(
     )
 }
 
+/// Stages every Git-visible path of the checkout into the index selected by `env`, exactly as
+/// `git add -A` would, except that untracked nested repositories are left alone: Git refuses
+/// to add an embedded checkout without a commit and would otherwise record one as a gitlink,
+/// and neither belongs to a JJK capture. Gitlinks already in the index keep Git's semantics.
+/// Pathspecs are top-anchored, so `cwd` may be any directory of the checkout.
+fn add_all_excluding_nested(
+    git: &GitCli<OsProcess>,
+    cwd: &Path,
+    env: BTreeMap<OsString, Option<OsString>>,
+) -> Result<(), RuntimeError> {
+    let root = worktree_root(git, cwd)?.unwrap_or_else(|| cwd.to_path_buf());
+    let listing = git
+        .required(
+            &root,
+            [
+                "ls-files",
+                "-z",
+                "--full-name",
+                "--others",
+                "--exclude-standard",
+            ],
+        )
+        .map_err(git_error)?;
+    let mut pathspecs = b":/\0".to_vec();
+    let mut excluded = 0usize;
+    // `ls-files --others` lists a nested repository as `<dir>/` instead of descending into it.
+    for nested in listing
+        .split(|byte| *byte == 0)
+        .filter(|line| line.ends_with(b"/"))
+    {
+        pathspecs.extend_from_slice(b":(top,exclude,literal)");
+        pathspecs.extend_from_slice(&nested[..nested.len() - 1]);
+        pathspecs.push(0);
+        excluded += 1;
+    }
+    let mut args = vec![OsString::from("add"), OsString::from("-A")];
+    let pathspec_file = if excluded == 0 {
+        None
+    } else {
+        let file = scratch_index_path(git, cwd, "pathspec")?;
+        fs::write(&file, &pathspecs).map_err(internal)?;
+        let mut flag = OsString::from("--pathspec-from-file=");
+        flag.push(file.as_os_str());
+        args.push(flag);
+        args.push(OsString::from("--pathspec-file-nul"));
+        Some(file)
+    };
+    let result = required_output(
+        git.run_with_env(cwd, observation_args(args), env)
+            .map_err(git_error)?,
+    );
+    if let Some(file) = pathspec_file {
+        let _ = fs::remove_file(file);
+    }
+    result.map(|_| ())
+}
+
 /// Tree of every Git-visible path (index entries plus untracked, non-ignored files), built in
 /// a private index so the user's index is untouched; blobs land in the private object
 /// directory, deduplicated against the repository's own objects.
@@ -3497,14 +3555,7 @@ fn git_visible_tree(
     let index = scratch_index_path(git, cwd, "snapshot")?;
     let env = with_index(&index, objects.clone());
     let result = (|| -> Result<String, RuntimeError> {
-        required_output(
-            git.run_with_env(
-                &root,
-                observation_args([OsString::from("add"), OsString::from("-A")]),
-                env.clone(),
-            )
-            .map_err(git_error)?,
-        )?;
+        add_all_excluding_nested(git, &root, env.clone())?;
         required_output(
             git.run_with_env(&root, observation_args([OsString::from("write-tree")]), env)
                 .map_err(git_error)?,
@@ -3593,16 +3644,26 @@ fn git_visible_paths(git: &GitCli<OsProcess>, root: &Path) -> Result<Vec<Vec<u8>
                 "ls-files",
                 "-z",
                 "--full-name",
-                "--cached",
+                "--stage",
                 "--others",
                 "--exclude-standard",
             ],
         )
         .map_err(git_error)?;
+    // Index entries print as `<mode> <oid> <stage>\t<path>`; untracked paths print bare.
+    // Gitlinks (mode 160000) are directories owned by another repository.
     let mut paths = raw
         .split(|byte| *byte == 0)
-        .filter(|path| !path.is_empty() && !path.ends_with(b"/"))
-        .map(<[u8]>::to_vec)
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| match line.iter().position(|byte| *byte == b'\t') {
+            Some(tab) if line.starts_with(b"160000 ") => {
+                let _ = tab;
+                None
+            }
+            Some(tab) => Some(line[tab + 1..].to_vec()),
+            None if line.ends_with(b"/") => None,
+            None => Some(line.to_vec()),
+        })
         .collect::<Vec<_>>();
     paths.sort();
     paths.dedup();
@@ -3664,7 +3725,8 @@ fn capture_git_visible_entries(
     Ok(entries)
 }
 
-/// Repository-relative paths of every blob and symlink in `tree` (a commit or tree object).
+/// Repository-relative paths of every blob and symlink in `tree` (a commit or tree object);
+/// gitlinks are excluded.
 fn tree_paths(
     git: &GitCli<OsProcess>,
     cwd: &Path,
@@ -3674,9 +3736,7 @@ fn tree_paths(
     let output = git
         .run_with_env(
             cwd,
-            observation_args(
-                ["ls-tree", "-r", "-z", "--name-only", "--full-tree", tree].map(OsString::from),
-            ),
+            observation_args(["ls-tree", "-r", "-z", "--full-tree", tree].map(OsString::from)),
             objects,
         )
         .map_err(git_error)?;
@@ -3685,11 +3745,19 @@ fn tree_paths(
             String::from_utf8_lossy(&output.stderr).trim().into(),
         ));
     }
+    // Entries print as `<mode> <type> <oid>\t<path>`; only blobs (files and symlinks) are
+    // JJK's to write or delete — commit entries are nested repositories.
     Ok(output
         .stdout
         .split(|byte| *byte == 0)
-        .filter(|path| !path.is_empty())
-        .map(<[u8]>::to_vec)
+        .filter_map(|line| {
+            let tab = line.iter().position(|byte| *byte == b'\t')?;
+            let (meta, path) = line.split_at(tab);
+            meta.split(|byte| *byte == b' ')
+                .nth(1)
+                .filter(|kind| *kind == b"blob")
+                .map(|_| path[1..].to_vec())
+        })
         .collect())
 }
 
@@ -3727,22 +3795,17 @@ pub(crate) fn snapshot_matches_live_with(
     Ok((matches, live))
 }
 
-fn snapshot_matches_captured(
+/// Whether the live index carries exactly what `expected` captured. The raw file is compared
+/// first (bytes, or the content-addressed blob); when it differs, the entries are compared —
+/// Git rewrites the index file for stat-cache refreshes (`git status`, `git diff`, editors),
+/// which changes bytes without changing a single staged path, mode, or object.
+fn index_matches_snapshot(
     git: &GitCli<OsProcess>,
     cwd: &Path,
     expected: &RuntimeGitSnapshot,
-    known_tree: Option<&str>,
-    live: &RuntimeGitSnapshot,
 ) -> Result<bool, RuntimeError> {
-    if live.refs != expected.refs
-        || live.head_symbolic != expected.head_symbolic
-        || live.head_oid != expected.head_oid
-    {
-        return Ok(false);
-    }
-    // Index: the raw file must equal the expected bytes, or hash to the expected blob.
     let index_path = repo_facts(git, cwd)?.index_path;
-    let index_matches = match &expected.index_blob {
+    let raw_matches = match &expected.index_blob {
         Some(blob) => {
             index_path.is_file()
                 && hash_object(
@@ -3762,7 +3825,61 @@ fn snapshot_matches_captured(
             live_index == expected.index
         }
     };
-    if !index_matches {
+    if raw_matches {
+        return Ok(true);
+    }
+    let expected_bytes = snapshot_index_bytes(git, cwd, expected)?;
+    let live_entries = if index_path.is_file() {
+        index_entries(git, cwd, None)?
+    } else {
+        Vec::new()
+    };
+    let expected_entries = if expected_bytes.is_empty() {
+        Vec::new()
+    } else {
+        let scratch = scratch_index_path(git, cwd, "compare")?;
+        fs::write(&scratch, &expected_bytes).map_err(internal)?;
+        let entries = index_entries(git, cwd, Some(&scratch));
+        let _ = fs::remove_file(&scratch);
+        entries?
+    };
+    Ok(live_entries == expected_entries)
+}
+
+/// `<mode> <oid> <stage>\t<path>` lines of an index — the user's, or the file at `index`.
+fn index_entries(
+    git: &GitCli<OsProcess>,
+    cwd: &Path,
+    index: Option<&Path>,
+) -> Result<Vec<u8>, RuntimeError> {
+    let env = match index {
+        Some(index) => with_index(index, BTreeMap::new()),
+        None => BTreeMap::new(),
+    };
+    required_output_bytes(
+        git.run_with_env(
+            cwd,
+            observation_args(["ls-files", "-z", "--full-name", "--stage"].map(OsString::from)),
+            env,
+        )
+        .map_err(git_error)?,
+    )
+}
+
+fn snapshot_matches_captured(
+    git: &GitCli<OsProcess>,
+    cwd: &Path,
+    expected: &RuntimeGitSnapshot,
+    known_tree: Option<&str>,
+    live: &RuntimeGitSnapshot,
+) -> Result<bool, RuntimeError> {
+    if live.refs != expected.refs
+        || live.head_symbolic != expected.head_symbolic
+        || live.head_oid != expected.head_oid
+    {
+        return Ok(false);
+    }
+    if !index_matches_snapshot(git, cwd, expected)? {
         return Ok(false);
     }
     let root = worktree_root(git, cwd)?.unwrap_or_else(|| cwd.to_path_buf());
@@ -4353,15 +4470,17 @@ fn workspace_matches_state(
     git: &GitCli<OsProcess>,
     cwd: &Path,
     state: Option<&RuntimeStateRow>,
+    captured: Option<&RuntimeGitSnapshot>,
 ) -> Result<bool, RuntimeError> {
     let Some(state) = state else {
         return Ok(observation_required(git, cwd, ["status", "--porcelain"])?.is_empty());
     };
-    // The workspace represents the current state when either the user's index equals the state
-    // tree (untracked extras such as handoff files are tolerated, as before), or the live
-    // worktree content — captured through a private index exactly like `save`/`step`/`nice` —
-    // equals the state tree. The second form keeps navigation available in a repository whose
-    // files were captured but never `git add`ed.
+    // Two things must hold before a restore may overwrite the checkout. The worktree content of
+    // state-tracked paths must equal the state tree (untracked extras are tolerated: a restore
+    // never deletes uncaptured paths), and the index must carry nothing a restore would lose:
+    // it equals the worktree, or it is exactly the index the current state captured — the
+    // ordinary JJK flow (commit, edit without `git add`, capture, navigate) leaves the index
+    // behind the worktree, and a return to the current state brings that index back.
     let cached = git
         .run(
             cwd,
@@ -4379,22 +4498,43 @@ fn workspace_matches_state(
             String::from_utf8_lossy(&cached.stderr).trim().into(),
         ));
     }
-    if cached.exit_code == 1 {
-        let state_tree = observation_required_os(
-            git,
-            cwd,
-            [
-                OsString::from("rev-parse"),
-                OsString::from(format!("{}^{{tree}}", state.git_oid)),
-            ],
-        )?;
-        if state_relative_content_tree(git, cwd, &state.git_oid)? != state_tree {
-            return Ok(false);
-        }
+    // Fast path: index equals the state tree and the worktree equals the index.
+    let index_matches_worktree = index_matches_worktree(git, cwd)?;
+    if cached.exit_code == 0 && index_matches_worktree {
+        return Ok(true);
     }
-    // Staged bytes must not diverge from the worktree, otherwise restoring the target tree
-    // would discard staged-only content.
-    index_matches_worktree(git, cwd)
+    let state_tree = observation_required_os(
+        git,
+        cwd,
+        [
+            OsString::from("rev-parse"),
+            OsString::from(format!("{}^{{tree}}", state.git_oid)),
+        ],
+    )?;
+    if state_relative_content_tree(git, cwd, &state.git_oid)? != state_tree {
+        return Ok(false);
+    }
+    if index_matches_worktree {
+        return Ok(true);
+    }
+    match captured {
+        Some(snapshot) => index_matches_snapshot(git, cwd, snapshot),
+        None => Ok(false),
+    }
+}
+
+/// Git control snapshot the current state captured, when one exists.
+fn captured_snapshot(
+    context: &RuntimeContext,
+    state: Option<&RuntimeStateRow>,
+) -> Result<Option<RuntimeGitSnapshot>, RuntimeError> {
+    let Some(state) = state else {
+        return Ok(None);
+    };
+    context
+        .store
+        .runtime_git_snapshot_for_state(context.workspace_id, &state.state_id)
+        .map_err(internal)
 }
 /// Whether every index entry's content equals the worktree, judged by content rather than the
 /// index stat cache. `git diff-files` trusts stat data, so right after a restore (index bytes
@@ -4503,6 +4643,16 @@ fn now_utc() -> Result<String, RuntimeError> {
         .format(&time::format_description::well_known::Rfc3339)
         .map_err(internal)
 }
+fn required_output_bytes(output: crate::ports::git::GitOutput) -> Result<Vec<u8>, RuntimeError> {
+    if output.exit_code != 0 {
+        Err(RuntimeError::Unavailable(
+            String::from_utf8_lossy(&output.stderr).trim().into(),
+        ))
+    } else {
+        Ok(output.stdout)
+    }
+}
+
 fn required_output(output: crate::ports::git::GitOutput) -> Result<String, RuntimeError> {
     if output.exit_code != 0 {
         Err(RuntimeError::Unavailable(

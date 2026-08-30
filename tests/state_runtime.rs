@@ -1035,3 +1035,189 @@ fn unknown_state_queries_are_user_errors_not_internal_failures() {
         );
     }
 }
+
+#[test]
+fn nested_repositories_are_neither_captured_nor_deleted() {
+    let directory = TempDir::new().expect("tempdir");
+    let root = directory.path();
+    let git = std::path::Path::new("git");
+    let jjk = assert_cmd::cargo::cargo_bin!("jjk");
+    init_repository(root, git);
+    fs::write(root.join("color.txt"), "base\n").expect("write base");
+    successful(root, git, &["add", "-A"]);
+    successful(
+        root,
+        git,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "commit",
+            "-qm",
+            "base",
+        ],
+    );
+    successful(root, &jjk, &["setup", "--json"]);
+
+    // A nested repository recorded as a gitlink (the shape `git submodule add` leaves), plus
+    // an untracked nested repository that Git lists as a directory.
+    let nested = root.join("vendor").join("lib");
+    fs::create_dir_all(&nested).expect("nested dir");
+    init_repository(&nested, git);
+    fs::write(nested.join("lib.txt"), "inner\n").expect("write inner");
+    successful(&nested, git, &["add", "-A"]);
+    successful(
+        &nested,
+        git,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "commit",
+            "-qm",
+            "inner",
+        ],
+    );
+    successful(root, git, &["add", "vendor/lib"]);
+    let staged =
+        String::from_utf8(successful(root, git, &["ls-files", "--stage"]).stdout).expect("utf8");
+    assert!(staged.contains("160000"), "gitlink staged: {staged}");
+    let loose = root.join("tools").join("scratch");
+    fs::create_dir_all(&loose).expect("loose nested dir");
+    init_repository(&loose, git);
+    fs::write(loose.join("note.txt"), "loose\n").expect("write loose");
+
+    fs::write(root.join("color.txt"), "green\n").expect("write green");
+    let green = json(&successful(root, &jjk, &["save", "--json", "--", "green"]));
+    fs::write(root.join("color.txt"), "purple\n").expect("write purple");
+    fs::write(nested.join("lib.txt"), "inner edited\n").expect("edit inner");
+    let purple = json(&successful(root, &jjk, &["step", "--json", "--", "purple"]));
+
+    successful(
+        root,
+        &jjk,
+        &["return", green["state_id"].as_str().expect("id"), "--json"],
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("color.txt")).expect("read"),
+        "green\n"
+    );
+    assert_eq!(
+        fs::read_to_string(nested.join("lib.txt")).expect("read inner"),
+        "inner edited\n",
+        "nested repository content is never restored"
+    );
+    assert!(nested.join(".git").exists(), "nested repository survives");
+    assert!(
+        loose.join(".git").exists(),
+        "untracked nested repository survives"
+    );
+    assert_eq!(
+        fs::read_to_string(loose.join("note.txt")).expect("read"),
+        "loose\n"
+    );
+    let current = json(&successful(root, &jjk, &["current", "--json"]));
+    assert_eq!(current["state_id"], green["state_id"]);
+
+    successful(
+        root,
+        &jjk,
+        &["return", purple["state_id"].as_str().expect("id"), "--json"],
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("color.txt")).expect("read"),
+        "purple\n"
+    );
+    let staged =
+        String::from_utf8(successful(root, git, &["ls-files", "--stage"]).stdout).expect("utf8");
+    assert!(staged.contains("160000"), "gitlink still staged: {staged}");
+    let doctor = json(&successful(root, &jjk, &["doctor", "--json"]));
+    assert_eq!(doctor["healthy"], true, "{doctor}");
+}
+
+#[test]
+fn navigation_works_without_git_add_and_survives_index_refreshes() {
+    let directory = TempDir::new().expect("tempdir");
+    let root = directory.path();
+    let git = std::path::Path::new("git");
+    let jjk = assert_cmd::cargo::cargo_bin!("jjk");
+    init_repository(root, git);
+    fs::write(root.join("color.txt"), "base\n").expect("write base");
+    successful(root, git, &["add", "-A"]);
+    successful(
+        root,
+        git,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "commit",
+            "-qm",
+            "base",
+        ],
+    );
+    successful(root, &jjk, &["setup", "--json"]);
+
+    // The ordinary flow: edit, capture, edit, capture — never `git add`. The index stays at
+    // `base` throughout, behind the worktree.
+    fs::write(root.join("color.txt"), "green\n").expect("write green");
+    let green = json(&successful(root, &jjk, &["save", "--json", "--", "green"]));
+    fs::write(root.join("color.txt"), "purple\n").expect("write purple");
+    let purple = json(&successful(root, &jjk, &["step", "--json", "--", "purple"]));
+
+    successful(
+        root,
+        &jjk,
+        &["return", green["state_id"].as_str().expect("id"), "--json"],
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("color.txt")).expect("read"),
+        "green\n"
+    );
+    // Porcelain commands rewrite the index file for stat-cache refreshes without changing any
+    // entry; navigation must judge the index by content, not bytes.
+    successful(root, git, &["status", "--porcelain"]);
+    successful(root, &jjk, &["undo", "--json"]);
+    assert_eq!(
+        fs::read_to_string(root.join("color.txt")).expect("read"),
+        "purple\n"
+    );
+    successful(root, git, &["status", "--porcelain"]);
+    successful(root, &jjk, &["up", "--json"]);
+    assert_eq!(
+        fs::read_to_string(root.join("color.txt")).expect("read"),
+        "green\n"
+    );
+    successful(root, &jjk, &["down", "--json"]);
+    assert_eq!(
+        fs::read_to_string(root.join("color.txt")).expect("read"),
+        "purple\n"
+    );
+    let current = json(&successful(root, &jjk, &["current", "--json"]));
+    assert_eq!(current["state_id"], purple["state_id"]);
+    let staged = String::from_utf8(successful(root, git, &["diff", "--cached", "--stat"]).stdout)
+        .expect("utf8");
+    assert!(
+        staged.trim().is_empty(),
+        "index never moved off HEAD: {staged}"
+    );
+
+    // Content the index alone holds (staged, then overwritten in the worktree, never captured)
+    // still blocks navigation: a restore would lose it.
+    fs::write(root.join("color.txt"), "staged only\n").expect("write staged");
+    successful(root, git, &["add", "color.txt"]);
+    fs::write(root.join("color.txt"), "worktree\n").expect("write worktree");
+    let refused = run(
+        root,
+        &jjk,
+        &["return", green["state_id"].as_str().expect("id")],
+    );
+    assert_eq!(refused.status.code(), Some(3));
+    assert_eq!(
+        fs::read_to_string(root.join("color.txt")).expect("read"),
+        "worktree\n"
+    );
+}

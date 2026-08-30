@@ -1,10 +1,10 @@
 #project v1
 slug: jjk
 first_shipped: 2026-08-29
-last_updated: 2026-08-29
+last_updated: 2026-08-30
 status: published
 repo: https://github.com/fire17/jjk
-version: v0.3.0
+version: v0.4.0
 channels: github
-last_shipped: 2026-08-29
+last_shipped: 2026-08-30
 ---
