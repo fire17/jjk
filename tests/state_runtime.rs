@@ -900,3 +900,138 @@ fn navigation_is_not_blocked_by_stale_index_stat_after_a_restore() {
         "purple\n"
     );
 }
+
+#[test]
+fn snapshots_survive_git_gc_and_keep_the_control_database_small() {
+    let directory = TempDir::new().expect("tempdir");
+    let root = directory.path();
+    let git = std::path::Path::new("git");
+    let jjk = assert_cmd::cargo::cargo_bin!("jjk");
+    init_repository(root, git);
+    fs::write(root.join("big.bin"), vec![0x42u8; 2_000_000]).expect("write tracked payload");
+    fs::write(root.join("a.txt"), "base\n").expect("write base");
+    successful(root, git, &["add", "-A"]);
+    successful(
+        root,
+        git,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "commit",
+            "-qm",
+            "base",
+        ],
+    );
+    successful(root, &jjk, &["setup", "--json"]);
+    let refs_before = successful(root, git, &["for-each-ref"]).stdout;
+    let mut ids = Vec::new();
+    for step in 0..8 {
+        fs::write(root.join("a.txt"), format!("{step}\n")).expect("write step");
+        successful(root, git, &["add", "-A"]);
+        let state = json(&successful(
+            root,
+            &jjk,
+            &["step", "--json", "--", &format!("step {step}")],
+        ));
+        ids.push(state["state_id"].as_str().expect("id").to_owned());
+    }
+    // Eight captures with a 2 MB tracked payload: the control database must not embed the
+    // payload sixteen times (before + after per capture) as it did before 0.3.0.
+    let database_bytes = control_database_bytes(root);
+    assert!(
+        database_bytes < 2_000_000,
+        "control database embeds worktree content: {database_bytes} bytes"
+    );
+    // No retention refs or other user-visible ref changes beyond the state refs.
+    let refs_after = String::from_utf8(successful(root, git, &["for-each-ref"]).stdout).unwrap();
+    assert!(!refs_after.contains("refs/jjk/keep"), "{refs_after}");
+    assert_eq!(
+        refs_after.lines().count(),
+        String::from_utf8(refs_before).unwrap().lines().count() + ids.len()
+    );
+    // Aggressive maintenance must not break navigation: snapshot objects are private.
+    successful(root, git, &["gc", "-q", "--prune=now", "--aggressive"]);
+    successful(root, git, &["fsck", "--full", "--strict"]);
+    let restored = json(&successful(root, &jjk, &["return", &ids[2], "--json"]));
+    assert_eq!(restored["state_id"], ids[2]);
+    assert_eq!(
+        fs::read_to_string(root.join("a.txt")).expect("restored"),
+        "2\n"
+    );
+    let undone = json(&successful(root, &jjk, &["undo", "--json"]));
+    assert_eq!(
+        json(&successful(root, &jjk, &["current", "--json"]))["state_id"],
+        undone["state_id"]
+    );
+    let doctor = json(&successful(root, &jjk, &["doctor", "--json"]));
+    assert_eq!(doctor["healthy"], true);
+}
+
+#[test]
+fn undo_reverts_a_return_instead_of_the_last_capture() {
+    let directory = TempDir::new().expect("tempdir");
+    let root = directory.path();
+    let git = std::path::Path::new("git");
+    let jjk = assert_cmd::cargo::cargo_bin!("jjk");
+    init_repository(root, git);
+    successful(root, &jjk, &["setup", "--json"]);
+    fs::write(root.join("a.txt"), "green\n").expect("write green");
+    let green = json(&successful(root, &jjk, &["save", "--json", "--", "green"]));
+    fs::write(root.join("a.txt"), "purple\n").expect("write purple");
+    let purple = json(&successful(root, &jjk, &["step", "--json", "--", "purple"]));
+    let graph_before = json(&successful(root, &jjk, &["see", "--json"]));
+
+    successful(root, &jjk, &["return", "green", "--json"]);
+    let undone = json(&successful(root, &jjk, &["undo", "--json"]));
+    assert_eq!(
+        undone["state_id"], purple["state_id"],
+        "undo must revert the navigation"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("a.txt")).expect("restored"),
+        "purple\n"
+    );
+    let graph_after = json(&successful(root, &jjk, &["see", "--json"]));
+    assert_eq!(
+        graph_after["states"].as_array().map(Vec::len),
+        graph_before["states"].as_array().map(Vec::len),
+        "undoing a return must not hide captured states"
+    );
+    let redone = json(&successful(root, &jjk, &["redo", "--json"]));
+    assert_eq!(redone["state_id"], green["state_id"]);
+    assert_eq!(
+        fs::read_to_string(root.join("a.txt")).expect("redone"),
+        "green\n"
+    );
+}
+
+#[test]
+fn unknown_state_queries_are_user_errors_not_internal_failures() {
+    let directory = TempDir::new().expect("tempdir");
+    let root = directory.path();
+    let git = std::path::Path::new("git");
+    let jjk = assert_cmd::cargo::cargo_bin!("jjk");
+    init_repository(root, git);
+    successful(root, &jjk, &["setup", "--json"]);
+    fs::write(root.join("a.txt"), "green\n").expect("write green");
+    successful(root, &jjk, &["save", "--json", "--", "green"]);
+    for command in ["return", "pick", "star", "archive"] {
+        let refused = run(root, &jjk, &[command, "no-such-state", "--json"]);
+        assert_eq!(
+            refused.status.code(),
+            Some(3),
+            "{command}: unknown state must be UNAVAILABLE, stderr: {}",
+            String::from_utf8_lossy(&refused.stderr)
+        );
+        let error: Value = serde_json::from_slice(&refused.stderr).expect("JSON error envelope");
+        assert_eq!(error["error"]["code"], "UNAVAILABLE", "{command}");
+        assert!(
+            error["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("not found")),
+            "{command}: {error}"
+        );
+    }
+}

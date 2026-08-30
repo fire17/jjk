@@ -1,3 +1,4 @@
+mod control;
 mod journal;
 mod migrate;
 mod operation;
@@ -266,9 +267,29 @@ pub(crate) struct RuntimeGitSnapshot {
     pub refs: Vec<RuntimeGitRef>,
     pub head_symbolic: Option<Vec<u8>>,
     pub head_oid: Option<Vec<u8>>,
+    /// Inline index bytes (portable/backup form and pre-0.3 histories). Empty when
+    /// `index_blob` carries the index instead.
     #[serde(with = "byte_field")]
     pub index: Vec<u8>,
+    /// Inline worktree entries (portable/backup form and pre-0.3 histories). Empty when
+    /// `tree` carries the content instead.
     pub worktree: Vec<RuntimeWorktreeEntry>,
+    /// Content-addressed form: Git tree of every Git-visible path, stored in the JJK-private
+    /// object directory so it is deduplicated, compressed, and never pruned by Git.
+    #[serde(default)]
+    pub tree: Option<String>,
+    /// Content-addressed form of the raw index file (a blob in the JJK-private object
+    /// directory); `None` with empty `index` means "no index file".
+    #[serde(default)]
+    pub index_blob: Option<String>,
+}
+
+impl RuntimeGitSnapshot {
+    /// Whether worktree content lives in the private object directory rather than inline.
+    #[must_use]
+    pub fn is_content_addressed(&self) -> bool {
+        self.tree.is_some()
+    }
 }
 
 #[cfg(test)]
@@ -287,6 +308,8 @@ mod snapshot_format_tests {
                 mode: 0o644,
                 bytes: vec![1, 2, 3, 0, 254],
             }],
+            tree: None,
+            index_blob: None,
         };
         let json = serde_json::to_string(&snapshot).expect("serialize");
         assert!(json.contains("\"index\":\"AP8K\""), "{json}");
@@ -313,7 +336,7 @@ struct RuntimeControlHistory {
     cursor: usize,
 }
 
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 struct RuntimeControlSnapshot {
     states: Vec<RuntimeStateProjection>,
     attempts: Vec<RuntimeAttemptProjection>,
@@ -323,7 +346,7 @@ struct RuntimeControlSnapshot {
     git: Option<RuntimeGitSnapshot>,
 }
 
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 struct RuntimeStateProjection {
     state_id: Vec<u8>,
     created_seq: u64,
@@ -338,7 +361,7 @@ struct RuntimeStateProjection {
     logical_parent: Option<Vec<u8>>,
 }
 
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 struct RuntimeAttemptProjection {
     attempt_id: Vec<u8>,
     root_state_id: Vec<u8>,
@@ -348,7 +371,7 @@ struct RuntimeAttemptProjection {
     last_event_seq: u64,
 }
 
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 struct RuntimeWorktreeProjection {
     worktree_id: Vec<u8>,
     attempt_id: Option<Vec<u8>>,
@@ -360,7 +383,7 @@ struct RuntimeWorktreeProjection {
     last_event_seq: u64,
 }
 
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 struct RuntimeProvenanceProjection {
     source_state_id: Vec<u8>,
     result_state_id: Vec<u8>,
@@ -489,7 +512,17 @@ impl SqliteStore {
             "INSERT INTO projection_meta (projection_name, reducer_version, projected_through_seq, projected_through_hash, projection_digest) VALUES (?1, 1, 0, zeroblob(32), zeroblob(32)) ON CONFLICT(projection_name) DO NOTHING",
             [RUNTIME_RECORDS_PROJECTION],
         )?;
-        projection::advance_all(&tx, head.local_seq, head.event_hash)?;
+        // Re-deriving every projection digest costs a full scan of every record; only do it
+        // when some projection is not already at the journal head (first open, or a write
+        // that did not advance). Otherwise a read-only command performs no writes at all.
+        let stale: i64 = tx.query_row(
+            "SELECT count(*) FROM projection_meta WHERE projected_through_seq != ?1 OR projected_through_hash != ?2",
+            params![head.local_seq, head.event_hash.as_slice()],
+            |row| row.get(0),
+        )?;
+        if stale > 0 {
+            projection::advance_all(&tx, head.local_seq, head.event_hash)?;
+        }
         tx.commit()?;
         Ok(())
     }
@@ -1037,47 +1070,7 @@ impl SqliteStore {
         direction: i8,
         workspace_id: Uuid,
     ) -> Result<RuntimeControlRestore, StoreError> {
-        let bytes: Vec<u8> = self.connection.query_row("SELECT record_value FROM projection_records WHERE projection_name = ?1 AND record_key = x'00'", [RUNTIME_CONTROL_PROJECTION], |row| row.get(0)).optional()?.ok_or_else(|| StoreError::InvalidData("no control history exists".into()))?;
-        let history: RuntimeControlHistory = serde_json::from_slice(&bytes).map_err(|error| {
-            StoreError::InvalidData(format!("invalid control history: {error}"))
-        })?;
-        let to = if direction < 0 {
-            history.cursor.checked_sub(1)
-        } else {
-            history
-                .cursor
-                .checked_add(1)
-                .filter(|index| *index < history.snapshots.len())
-        }
-        .ok_or_else(|| {
-            StoreError::InvalidData(
-                if direction < 0 {
-                    "no earlier control snapshot to undo to"
-                } else {
-                    "no later control snapshot to redo to"
-                }
-                .into(),
-            )
-        })?;
-        let snapshot = &history.snapshots[to];
-        let active = snapshot
-            .worktrees
-            .iter()
-            .find(|row| row.worktree_id == workspace_id.as_bytes())
-            .and_then(|row| row.active_state_id.as_ref());
-        let current = active
-            .and_then(|id| snapshot.states.iter().find(|state| &state.state_id == id))
-            .map(runtime_state_from_projection)
-            .transpose()?;
-        let git = snapshot.git.clone().ok_or_else(|| {
-            StoreError::InvalidData("control snapshot predates exact Git artifact capture".into())
-        })?;
-        Ok(RuntimeControlRestore {
-            current,
-            git,
-            from_cursor: history.cursor,
-            to_cursor: to,
-        })
+        control::plan(&self.connection, direction, workspace_id)
     }
 
     pub(crate) fn apply_runtime_control_restore(
@@ -1085,29 +1078,9 @@ impl SqliteStore {
         event: &EventRecord,
         to_cursor: usize,
     ) -> Result<JournalHead, StoreError> {
-        let bytes: Vec<u8> = self.connection.query_row("SELECT record_value FROM projection_records WHERE projection_name = ?1 AND record_key = x'00'", [RUNTIME_CONTROL_PROJECTION], |row| row.get(0))?;
-        let mut history: RuntimeControlHistory =
-            serde_json::from_slice(&bytes).map_err(|error| {
-                StoreError::InvalidData(format!("invalid control history: {error}"))
-            })?;
-        let snapshot =
-            history.snapshots.get(to_cursor).cloned().ok_or_else(|| {
-                StoreError::InvalidData("control history cursor is invalid".into())
-            })?;
         let head = <Self as crate::ports::journal::Journal>::head(self)?;
         self.append_atomic(head, std::slice::from_ref(event), |tx, sequences| {
-            restore_control_snapshot(tx, &snapshot)?;
-            history.cursor = to_cursor;
-            projection::put_record(
-                tx,
-                RUNTIME_CONTROL_PROJECTION,
-                1,
-                &[0],
-                &serde_json::to_vec(&history)
-                    .map_err(|error| StoreError::InvalidData(error.to_string()))?,
-                sequences[0],
-            )?;
-            Ok(())
+            control::restore(tx, sequences[0], to_cursor)
         })
     }
 
@@ -1116,25 +1089,8 @@ impl SqliteStore {
         workspace_id: Uuid,
         state_id: &str,
     ) -> Result<Option<RuntimeGitSnapshot>, StoreError> {
-        let bytes: Option<Vec<u8>> = self.connection.query_row("SELECT record_value FROM projection_records WHERE projection_name = ?1 AND record_key = x'00'", [RUNTIME_CONTROL_PROJECTION], |row| row.get(0)).optional()?;
-        let Some(bytes) = bytes else {
-            return Ok(None);
-        };
-        let history: RuntimeControlHistory = serde_json::from_slice(&bytes).map_err(|error| {
-            StoreError::InvalidData(format!("invalid control history: {error}"))
-        })?;
         let wanted = parse_hex_uuid(state_id, "state id")?;
-        Ok(history.snapshots.iter().rev().find_map(|snapshot| {
-            snapshot
-                .worktrees
-                .iter()
-                .any(|row| {
-                    row.worktree_id == workspace_id.as_bytes()
-                        && row.active_state_id.as_deref() == Some(wanted.as_bytes())
-                })
-                .then(|| snapshot.git.clone())
-                .flatten()
-        }))
+        control::git_snapshot_for_state(&self.connection, workspace_id, wanted)
     }
 
     pub(crate) fn append_atomic<R>(
@@ -1150,6 +1106,7 @@ impl SqliteStore {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        control::migrate_if_needed(&tx, expected_head.local_seq)?;
         tx.pragma_update(None, "defer_foreign_keys", true)?;
         let actual_head = journal::head_in(&tx)?;
         if actual_head != expected_head {
@@ -1480,27 +1437,7 @@ fn apply_runtime_projection(
         RuntimeProjection::ControlGit { before, after } => {
             record_control_snapshot(tx, seq, before, after)
         }
-        RuntimeProjection::ControlRestore { to_cursor } => {
-            let bytes: Vec<u8> = tx.query_row("SELECT record_value FROM projection_records WHERE projection_name = ?1 AND record_key = x'00'", [RUNTIME_CONTROL_PROJECTION], |row| row.get(0))?;
-            let mut history: RuntimeControlHistory =
-                serde_json::from_slice(&bytes).map_err(|error| {
-                    StoreError::InvalidData(format!("invalid control history: {error}"))
-                })?;
-            let snapshot = history.snapshots.get(*to_cursor).cloned().ok_or_else(|| {
-                StoreError::InvalidData("control history cursor is invalid".into())
-            })?;
-            restore_control_snapshot(tx, &snapshot)?;
-            history.cursor = *to_cursor;
-            projection::put_record(
-                tx,
-                RUNTIME_CONTROL_PROJECTION,
-                1,
-                &[0],
-                &serde_json::to_vec(&history)
-                    .map_err(|error| StoreError::InvalidData(error.to_string()))?,
-                seq,
-            )
-        }
+        RuntimeProjection::ControlRestore { to_cursor } => control::restore(tx, seq, *to_cursor),
         RuntimeProjection::Raw(update) => projection::put_record(
             tx,
             &update.projection_name,
@@ -1591,23 +1528,7 @@ fn capture_control_snapshot(connection: &Connection) -> Result<RuntimeControlSna
     })
 }
 fn ensure_initial_control_snapshot(tx: &rusqlite::Transaction<'_>) -> Result<(), StoreError> {
-    let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM projection_records WHERE projection_name=?1 AND record_key=x'00')", [RUNTIME_CONTROL_PROJECTION], |row| row.get(0))?;
-    if !exists {
-        let history = RuntimeControlHistory {
-            snapshots: vec![capture_control_snapshot(tx)?],
-            cursor: 0,
-        };
-        projection::put_record(
-            tx,
-            RUNTIME_CONTROL_PROJECTION,
-            1,
-            &[0],
-            &serde_json::to_vec(&history)
-                .map_err(|error| StoreError::InvalidData(error.to_string()))?,
-            1,
-        )?;
-    }
-    Ok(())
+    control::ensure_initial(tx, 1).map(|_| ())
 }
 fn record_control_snapshot(
     tx: &rusqlite::Transaction<'_>,
@@ -1615,36 +1536,7 @@ fn record_control_snapshot(
     before: &RuntimeGitSnapshot,
     after: &RuntimeGitSnapshot,
 ) -> Result<(), StoreError> {
-    let bytes: Option<Vec<u8>> = tx.query_row("SELECT record_value FROM projection_records WHERE projection_name=?1 AND record_key=x'00'", [RUNTIME_CONTROL_PROJECTION], |row| row.get(0)).optional()?;
-    let mut history = match bytes {
-        Some(bytes) => serde_json::from_slice::<RuntimeControlHistory>(&bytes)
-            .map_err(|error| StoreError::InvalidData(error.to_string()))?,
-        None => RuntimeControlHistory {
-            snapshots: Vec::new(),
-            cursor: 0,
-        },
-    };
-    if history.snapshots.is_empty() {
-        let mut initial = capture_control_snapshot(tx)?;
-        initial.git = Some(before.clone());
-        history.snapshots.push(initial);
-        history.cursor = 0;
-    } else {
-        history.snapshots.truncate(history.cursor + 1);
-    }
-    let mut next = capture_control_snapshot(tx)?;
-    next.git = Some(after.clone());
-    history.snapshots.push(next);
-    history.cursor = history.snapshots.len() - 1;
-    projection::put_record(
-        tx,
-        RUNTIME_CONTROL_PROJECTION,
-        1,
-        &[0],
-        &serde_json::to_vec(&history)
-            .map_err(|error| StoreError::InvalidData(error.to_string()))?,
-        seq,
-    )
+    control::record(tx, seq, before, after)
 }
 fn restore_control_snapshot(
     tx: &rusqlite::Transaction<'_>,

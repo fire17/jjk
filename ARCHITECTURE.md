@@ -6,7 +6,7 @@ JJK v0.1 is one Rust package producing a reusable library and one `jjk` binary. 
 
 1. **Git** owns content objects, commits, refs, index/worktrees, remotes, and universal interoperability.
 2. **Jujutsu**, when explicitly available, owns optional local change IDs and operation-log capabilities. Git-only mode is complete.
-3. **JJK SQLite** owns append-only semantic events and transaction records. Materialized projections are disposable caches rebuilt from those events.
+3. **JJK SQLite** owns append-only semantic events and transaction records. Materialized projections are disposable caches rebuilt from those events. Control-plane history (for whole-control undo/redo and exact return snapshots) is one delta record per operation plus a content-addressed Git snapshot; nothing in the database grows with the size of the checkout, and per-operation cost does not grow with history length.
 
 No layer impersonates another identity. A JJK state ID, Git object ID, JJ change/commit ID, attempt ID, workspace ID, operation ID, and mutable label are distinct types.
 
@@ -49,6 +49,8 @@ The operation journal records preconditions, intended effects, pre/post fingerpr
 ```text
 <git-common-dir>/jjk/
 ├── state.sqlite3
+├── objects/            # private Git object store: snapshot trees + index blobs (never gc'd by Git)
+├── tmp/                # scratch indexes for private-index operations
 ├── locks/
 │   ├── lifecycle.lock
 │   ├── repository.lock

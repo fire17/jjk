@@ -6,15 +6,27 @@ This project follows semantic versioning.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-30
+
+### Changed
+
+- Control snapshots are content-addressed: worktree content is a Git tree and the raw index a blob, both stored in a JJK-private object directory (`<git-common-dir>/jjk/objects/`, reading through the repository's objects). Snapshot data is deduplicated and compressed, `state.sqlite3` no longer embeds file bytes, Git maintenance (`gc`, `prune`) never touches the private directory, and no retention refs or user-visible objects are created. Pre-0.3 inline snapshots still load and restore. Backups keep the inline, portable form.
+
 ## [0.3.0] - 2026-08-29
 
 ### Changed
 
 - Control snapshots now record only Git-visible paths (index entries plus untracked, non-ignored files) instead of walking the entire checkout. Ignored content such as `target/`, `node_modules/`, and `.worktrees/` is never stored, restored, or deleted; a repository with a 20 MB ignored artifact no longer grows `state.sqlite3` by ~144 MB per capture.
+- Control history is stored as one small delta record per operation (`runtime-control-*-v2` projections) instead of one JSON record holding every whole-table snapshot. History no longer grows as operations × states, navigation and undo/redo read only the records they need, and an existing v1 history is migrated in place on the first write.
+- Stored Git snapshots no longer carry `refs/jjk/states/*`; those refs are rebuilt from the states table at the same cursor, so a record's size no longer grows with the number of states.
+- Opening the store no longer re-derives every projection digest on every command when the projections are already at the journal head; read-only commands (`current`, `see`, `status`, …) perform no database writes and their cost no longer grows with history length.
+- Back/forward navigation history is bounded to the 200 most recent entries per workspace so control records stay small over a workspace's lifetime.
 - Snapshot byte fields are stored as base64 text; the previous JSON array form still loads, so existing control histories, conflict preimages, and backups remain readable.
 
 ### Fixed
 
+- `undo` after a `return` (or `up`/`down`/`back`/`forward`) now reverts the navigation itself: activations record before/after control snapshots, so the last capture is no longer un-captured by mistake and the graph keeps every state.
+- Unknown or ambiguous state queries (`return nope`) are reported as `UNAVAILABLE` (exit 3) instead of `INTERNAL` (exit 70).
 - `return`, `up`, `down`, `undo`, `redo`, and conflict abort no longer delete uncaptured files. Restores remove only paths tracked by the index, owned by the target snapshot, or captured by the state being left; untracked extras created after a capture survive, and verification checks the restored projection rather than demanding a byte-identical checkout.
 - `return`, `up`, `down`, `undo`, and `redo` no longer refuse in a repository whose files were captured but never `git add`ed: when the user's index differs from the state tree, the workspace match now also accepts worktree content that equals the state tree, measured through a private index seeded from the state (`read-tree` + `add -u`). Staged-versus-worktree divergence still refuses.
 - Navigation is no longer refused right after a restore because the index stat cache is stale: the staged-versus-worktree check now compares content through a private refreshed index copy instead of trusting `git diff-files` stat data (previously an immediate `undo` after `return` failed until `git status` ran).

@@ -209,7 +209,7 @@ curl -fsSL https://raw.githubusercontent.com/fire17/jjk/main/scripts/install.sh 
 Pin version and destination:
 
 ```sh
-JJK_VERSION=v0.3.0 JJK_INSTALL_DIR="$HOME/.local/bin" \
+JJK_VERSION=v0.4.0 JJK_INSTALL_DIR="$HOME/.local/bin" \
   sh scripts/install.sh
 ```
 
@@ -218,7 +218,7 @@ The installer downloads the matching archive and `.sha256`, verifies it, and ins
 ### From source
 
 ```sh
-cargo install --locked --git https://github.com/fire17/jjk --tag v0.3.0
+cargo install --locked --git https://github.com/fire17/jjk --tag v0.4.0
 ```
 
 Requires Rust 1.85+ and Git at runtime.

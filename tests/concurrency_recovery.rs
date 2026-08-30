@@ -943,7 +943,9 @@ fn assert_projection_watermarks(database: &Path) -> u64 {
         .collect::<BTreeSet<_>>();
     assert!(
         names.is_superset(&BTreeSet::from([
-            "runtime-control-history-v1",
+            "runtime-control-index-v2",
+            "runtime-control-delta-v2",
+            "runtime-control-latest-v2",
             "runtime-navigation-v1",
             "runtime-records-v1"
         ])),
