@@ -6,6 +6,12 @@ This project follows semantic versioning.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-08-30
+
+### Fixed
+
+- Navigating from a subdirectory no longer deletes and recreates that directory. A restore that emptied the invoking directory pruned it, so the user's shell was left in an unlinked directory (`No such file or directory` for every following command until `cd`). Empty-directory pruning now stops at the invoking directory and its ancestors.
+
 ## [0.4.1] - 2026-08-30
 
 ### Fixed

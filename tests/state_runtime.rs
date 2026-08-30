@@ -1221,3 +1221,75 @@ fn navigation_works_without_git_add_and_survives_index_refreshes() {
         "worktree\n"
     );
 }
+
+#[test]
+fn navigation_from_a_subdirectory_keeps_that_directory_alive() {
+    let directory = TempDir::new().expect("tempdir");
+    let root = directory.path();
+    let git = std::path::Path::new("git");
+    let jjk = assert_cmd::cargo::cargo_bin!("jjk");
+    init_repository(root, git);
+    let leaf_dir = root.join("deep").join("er");
+    fs::create_dir_all(&leaf_dir).expect("leaf dir");
+    fs::write(root.join("top.txt"), "base\n").expect("write top");
+    fs::write(leaf_dir.join("leaf.txt"), "base\n").expect("write leaf");
+    successful(root, git, &["add", "-A"]);
+    successful(
+        root,
+        git,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "commit",
+            "-qm",
+            "base",
+        ],
+    );
+    successful(&leaf_dir, &jjk, &["setup", "--json"]);
+    #[cfg(unix)]
+    let inode_before = {
+        use std::os::unix::fs::MetadataExt;
+        fs::metadata(&leaf_dir).expect("leaf dir metadata").ino()
+    };
+
+    fs::write(leaf_dir.join("leaf.txt"), "green\n").expect("write green");
+    fs::write(root.join("top.txt"), "green\n").expect("write green top");
+    let green = json(&successful(
+        &leaf_dir,
+        &jjk,
+        &["save", "--json", "--", "green"],
+    ));
+    fs::write(leaf_dir.join("leaf.txt"), "purple\n").expect("write purple");
+    fs::write(root.join("top.txt"), "purple\n").expect("write purple top");
+    successful(&leaf_dir, &jjk, &["step", "--json", "--", "purple"]);
+
+    successful(
+        &leaf_dir,
+        &jjk,
+        &["return", green["state_id"].as_str().expect("id"), "--json"],
+    );
+    assert_eq!(
+        fs::read_to_string(leaf_dir.join("leaf.txt")).expect("read leaf"),
+        "green\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("top.txt")).expect("read top"),
+        "green\n"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(
+            fs::metadata(&leaf_dir).expect("leaf dir metadata").ino(),
+            inode_before,
+            "the invoking directory must not be deleted and recreated"
+        );
+    }
+    successful(&leaf_dir, &jjk, &["undo", "--json"]);
+    assert_eq!(
+        fs::read_to_string(leaf_dir.join("leaf.txt")).expect("read leaf"),
+        "purple\n"
+    );
+}

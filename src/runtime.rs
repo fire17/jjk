@@ -4044,6 +4044,8 @@ pub(crate) fn restore_runtime_git_snapshot(
             ],
         )?;
     }
+    let invoking_directory = fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
+    let root = fs::canonicalize(&root).unwrap_or(root);
     for relative in &removable {
         let path = root.join(os_string(relative)?);
         match fs::remove_file(&path) {
@@ -4051,7 +4053,7 @@ pub(crate) fn restore_runtime_git_snapshot(
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(internal(error)),
         }
-        remove_empty_parents(&root, &path);
+        remove_empty_parents(&root, &path, &invoking_directory);
     }
     if let Some(tree) = &snapshot.tree {
         materialize_tree(git, &root, tree)?;
@@ -4074,12 +4076,15 @@ pub(crate) fn restore_runtime_git_snapshot(
     Ok(())
 }
 
-/// Prunes directories left empty by a removal, stopping at `root`. Git has no empty
-/// directories, so nothing observable is lost.
-fn remove_empty_parents(root: &Path, path: &Path) {
+/// Prunes directories left empty by a removal, stopping at `root` and never touching `keep`
+/// or its ancestors: `keep` is the invoking directory, and deleting it — even if a restore
+/// recreates the path — leaves the user's shell in an unlinked directory. Git has no empty
+/// directories, so nothing observable is lost by pruning; an empty directory left behind
+/// is harmless.
+fn remove_empty_parents(root: &Path, path: &Path, keep: &Path) {
     let mut parent = path.parent();
     while let Some(directory) = parent {
-        if directory == root || fs::remove_dir(directory).is_err() {
+        if directory == root || keep.starts_with(directory) || fs::remove_dir(directory).is_err() {
             break;
         }
         parent = directory.parent();
