@@ -4045,7 +4045,6 @@ pub(crate) fn restore_runtime_git_snapshot(
         )?;
     }
     let invoking_directory = fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
-    let root = fs::canonicalize(&root).unwrap_or(root);
     for relative in &removable {
         let path = root.join(os_string(relative)?);
         match fs::remove_file(&path) {
@@ -4084,7 +4083,13 @@ pub(crate) fn restore_runtime_git_snapshot(
 fn remove_empty_parents(root: &Path, path: &Path, keep: &Path) {
     let mut parent = path.parent();
     while let Some(directory) = parent {
-        if directory == root || keep.starts_with(directory) || fs::remove_dir(directory).is_err() {
+        // Canonical forms are compared only; Git receives the original spelling (a Windows
+        // canonical path carries a `\\?\` prefix Git cannot open). An uncanonicalizable
+        // directory is kept — the safe side.
+        let protects_keep = fs::canonicalize(directory)
+            .map(|canonical| keep.starts_with(&canonical))
+            .unwrap_or(true);
+        if directory == root || protects_keep || fs::remove_dir(directory).is_err() {
             break;
         }
         parent = directory.parent();
